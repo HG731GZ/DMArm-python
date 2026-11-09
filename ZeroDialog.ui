@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ZeroDialog</class>
+ <widget class="QDialog" name="ZeroDialog">
+  <property name="windowTitle"><string>零位设定</string></property>
+  <layout class="QVBoxLayout" name="layout">
+   <item><widget class="QLabel" name="instructions"><property name="text"><string>将电机停在机械参考位，再选择要设零的关节。</string></property></widget></item>
+   <item><widget class="QComboBox" name="jointBox">
+    <property name="placeholderText"><string>选择电机</string></property>
+    <item><property name="text"><string>J1</string></property></item>
+    <item><property name="text"><string>J2</string></property></item>
+    <item><property name="text"><string>J3</string></property></item>
+    <item><property name="text"><string>J4</string></property></item>
+    <item><property name="text"><string>J5</string></property></item>
+    <item><property name="text"><string>J6</string></property></item>
+   </widget></item>
+   <item><layout class="QHBoxLayout" name="buttons">
+    <item><widget class="QPushButton" name="cancelButton"><property name="text"><string>取消</string></property></widget></item>
+    <item><widget class="QPushButton" name="applyButton"><property name="text"><string>确认设零</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+   </layout></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

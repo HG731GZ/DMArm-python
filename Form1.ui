@@ -1,0 +1,1158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Form1</class>
+ <widget class="QMainWindow" name="Form1">
+  <property name="windowTitle">
+   <string>DMArm · UR 同构主端</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1220</width>
+    <height>790</height>
+   </rect>
+  </property>
+  <property name="styleSheet">
+   <string>QMainWindow { background: #f2f5f7; }
+QGroupBox { background: white; border: 1px solid #cbd5dc; border-radius: 5px; margin-top: 10px; padding: 9px 4px 3px; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #28546a; padding: 0 4px; }
+QPushButton { padding: 4px 10px; }
+QPushButton#openButton:enabled { background: #22677c; color: white; border: 1px solid #1d5b6d; border-radius: 4px; }
+QPushButton#openButton:pressed { background: #184e60; }
+QPushButton:disabled { color: #78838a; }
+QPlainTextEdit, QTableWidget { background: white; alternate-background-color: #f3f7f8; gridline-color: #e0e7eb; border: 1px solid #d8e0e5; }
+QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #243e4d; }
+
+</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <item>
+     <widget class="QGroupBox" name="deviceGroup">
+      <property name="title">
+       <string>CAN FD 设备</string>
+      </property>
+      <layout class="QHBoxLayout" name="deviceGroupLayout">
+       <item>
+        <widget class="QPushButton" name="openButton">
+         <property name="text">
+          <string>打开设备</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="listenOnly">
+         <property name="text"><string>只听</string></property>
+         <property name="toolTip"><string>打开前选择。只听时仅接收总线报文。</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="readAllButton">
+         <property name="text"><string>刷新状态</string></property>
+         <property name="toolTip"><string>先收到 J1 模式应答，再逐台读取模式和状态。</string></property>
+         <property name="enabled"><bool>false</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="deviceStatus">
+         <property name="text">
+          <string>未连接</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="channelLabel">
+         <property name="text">
+          <string />
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="rxCount">
+         <property name="text">
+          <string>接收 0 帧</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QGridLayout" name="panelsLayout" columnstretch="3,2">
+      <item row="0" column="0">
+       <widget class="QGroupBox" name="feedbackGroup">
+        <property name="title">
+         <string>六轴电机反馈</string>
+        </property>
+        <layout class="QVBoxLayout" name="feedbackGroupLayout">
+         <item>
+          <widget class="QTableWidget" name="feedbackTable">
+           <property name="editTriggers">
+            <set>QAbstractItemView::NoEditTriggers</set>
+           </property>
+           <property name="selectionMode">
+            <enum>QAbstractItemView::NoSelection</enum>
+           </property>
+           <property name="alternatingRowColors">
+            <bool>true</bool>
+           </property>
+           <attribute name="verticalHeaderVisible">
+            <bool>false</bool>
+           </attribute>
+           <attribute name="verticalHeaderDefaultSectionSize">
+            <number>27</number>
+           </attribute>
+           <row />
+           <row />
+           <row />
+           <row />
+           <row />
+           <row />
+           <column>
+            <property name="text">
+             <string>轴</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>位置 (rad)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>速度 (rad/s)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>力矩 (N·m)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>MOS (°C)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>转子 (°C)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>错误码</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>模式</string>
+            </property>
+           </column>
+           <item row="0" column="0">
+            <property name="text">
+             <string>J1</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="0">
+            <property name="text">
+             <string>J2</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="0">
+            <property name="text">
+             <string>J3</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="0">
+            <property name="text">
+             <string>J4</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="0">
+            <property name="text">
+             <string>J5</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="0">
+            <property name="text">
+             <string>J6</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="3">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="4">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="5">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="6">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="7">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <property name="minimumSize">
+            <size>
+             <width>610</width>
+             <height>200</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QGroupBox" name="anglesGroup">
+        <property name="title">
+         <string>主从关节角</string>
+        </property>
+        <layout class="QVBoxLayout" name="anglesGroupLayout">
+         <item>
+          <widget class="QTableWidget" name="anglesTable">
+           <property name="minimumSize"><size><width>445</width><height>227</height></size></property>
+           <property name="editTriggers">
+            <set>QAbstractItemView::NoEditTriggers</set>
+           </property>
+           <property name="selectionMode">
+            <enum>QAbstractItemView::NoSelection</enum>
+           </property>
+           <property name="alternatingRowColors">
+            <bool>true</bool>
+           </property>
+           <attribute name="verticalHeaderVisible">
+            <bool>false</bool>
+           </attribute>
+           <attribute name="verticalHeaderDefaultSectionSize">
+            <number>27</number>
+           </attribute>
+           <row />
+           <row />
+           <row />
+           <row />
+           <row />
+           <row />
+           <column>
+            <property name="text">
+             <string>轴</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>主端 (°)</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>从端 (°)</string>
+            </property>
+           </column>
+           <column><property name="text"><string>速度
+(rad/s)</string></property></column>
+           <column><property name="text"><string>重力矩
+(N·m)</string></property></column>
+           <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示前馈力矩（N·m）</string></property></column>
+           <item row="0" column="0">
+            <property name="text">
+             <string>J1</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="0">
+            <property name="text">
+             <string>J2</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="1" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="0">
+            <property name="text">
+             <string>J3</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="2" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="0">
+            <property name="text">
+             <string>J4</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="3" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="0">
+            <property name="text">
+             <string>J5</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="4" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="0">
+            <property name="text">
+             <string>J6</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="1">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="5" column="2">
+            <property name="text">
+             <string>—</string>
+            </property>
+            <property name="textAlignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </item>
+           <item row="0" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="0" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="3"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="4"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="0" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QGroupBox" name="motorGroup">
+        <property name="title">
+         <string>电机设定</string>
+        </property>
+        <layout class="QGridLayout" name="motorGroupLayout">
+         <item row="3" column="0"><widget class="QPushButton" name="clearButton"><property name="text"><string>整臂清错</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+         <item row="0" column="0">
+          <widget class="QPushButton" name="enableButton">
+           <property name="text">
+            <string>整臂使能</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QPushButton" name="disableButton">
+           <property name="text">
+            <string>整臂失能</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="2">
+          <widget class="QPushButton" name="sendButton">
+           <property name="text">
+            <string>开始发送</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="3">
+          <widget class="QPushButton" name="mitButton">
+           <property name="text">
+            <string>六轴 MIT</string>
+           </property>
+           <property name="toolTip">
+            <string>周期发送中释放到 MIT。已开启重力补偿时，首帧即使用当前姿态的补偿力矩。</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="4">
+          <widget class="QPushButton" name="pvButton">
+           <property name="text">
+            <string>六轴 PV</string>
+           </property>
+           <property name="toolTip">
+            <string>周期发送中切到 PV，按切换瞬间的实测关节位置持位。</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="5">
+          <widget class="QPushButton" name="gravityButton">
+           <property name="text">
+            <string>开启重力补偿</string>
+           </property>
+           <property name="toolTip">
+            <string>重力补偿只作用于 MIT 关节。切到 PV 后保留开关和渐入进度。</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1"><widget class="QPushButton" name="zeroButton"><property name="text"><string>零位设定</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+         <item row="3" column="2" colspan="4"><widget class="QLabel" name="controlStatus"><property name="text"><string>等待设备</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+         <item row="2" column="0">
+          <widget class="QPushButton" name="lockJ1">
+           <property name="text">
+            <string>J1 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QPushButton" name="lockJ2">
+           <property name="text">
+            <string>J2 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="2">
+          <widget class="QPushButton" name="lockJ3">
+           <property name="text">
+            <string>J3 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="3">
+          <widget class="QPushButton" name="lockJ4">
+           <property name="text">
+            <string>J4 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="4">
+          <widget class="QPushButton" name="lockJ5">
+           <property name="text">
+            <string>J5 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="5">
+          <widget class="QPushButton" name="lockJ6">
+           <property name="text">
+            <string>J6 锁定</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QGroupBox" name="toolGroup">
+        <property name="title">
+         <string>夹钳反馈</string>
+        </property>
+        <layout class="QGridLayout" name="toolGroupLayout">
+         <item row="4" column="0"><widget class="QPushButton" name="toolMitButton"><property name="enabled"><bool>false</bool></property><property name="text"><string>夹钳 MIT</string></property></widget></item>
+         <item row="4" column="1"><widget class="QPushButton" name="toolPvtButton"><property name="enabled"><bool>false</bool></property><property name="text"><string>夹钳 PVT</string></property></widget></item>
+         <item row="0" column="0">
+          <widget class="QLabel" name="toolField0">
+           <property name="text">
+            <string>位置 (°)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="toolValue0">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QLabel" name="toolField1">
+           <property name="text">
+            <string>速度 (rad/s)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QLabel" name="toolValue1">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="2">
+          <widget class="QLabel" name="toolField2">
+           <property name="text">
+            <string>力矩 (N·m)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="2">
+          <widget class="QLabel" name="toolValue2">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="3">
+          <widget class="QLabel" name="toolField3">
+           <property name="text">
+            <string>估算夹持力 (N)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="3">
+          <widget class="QLabel" name="toolValue3">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="toolField4">
+           <property name="text">
+            <string>MOS (°C)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="toolValue4">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QLabel" name="toolField5">
+           <property name="text">
+            <string>转子 (°C)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="QLabel" name="toolValue5">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="2">
+          <widget class="QLabel" name="toolField6">
+           <property name="text">
+            <string>状态</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="2">
+          <widget class="QLabel" name="toolValue6">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="3">
+          <widget class="QLabel" name="toolField7">
+           <property name="text">
+            <string>模式</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="3">
+          <widget class="QLabel" name="toolValue7">
+           <property name="text">
+            <string>—</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item row="1" column="1" rowspan="2">
+       <widget class="QGroupBox" name="poseGroup">
+        <property name="title">
+         <string>主从姿态</string>
+        </property>
+        <layout class="QVBoxLayout" name="poseGroupLayout">
+         <item>
+          <widget class="ArmView" name="armView" />
+         </item>
+         <item>
+          <widget class="QCheckBox" name="trackPose">
+           <property name="enabled"><bool>false</bool></property>
+           <property name="text"><string>连续读取失能姿态</string></property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="teleopGroup">
+      <property name="title">
+       <string>遥操作</string>
+      </property>
+      <layout class="QHBoxLayout" name="teleopGroupLayout">
+       <item>
+        <widget class="QLabel" name="localEndpoint">
+         <property name="text">
+          <string />
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="remoteAddress">
+         <property name="text">
+          <string />
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="remotePort">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>65535</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="udpButton">
+         <property name="text">
+          <string>连接 UDP</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="syncButton">
+         <property name="text">
+          <string>同步到从端</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="followButton">
+         <property name="text">
+          <string>跟随从端</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="homeButton">
+         <property name="text">
+          <string>回预设位</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="monitorGroup">
+      <property name="title">
+       <string>CAN FD 收发记录</string>
+      </property>
+      <layout class="QVBoxLayout" name="monitorGroupLayout">
+       <item>
+        <widget class="QPlainTextEdit" name="frameLog">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+         <property name="maximumBlockCount">
+          <number>250</number>
+         </property>
+         <property name="placeholderText">
+          <string>打开设备后显示查询和原始 FD 回包</string>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>108</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar" />
+ </widget>
+ <customwidgets>
+  <customwidget><class>ArmView</class><extends>QWidget</extends><header>ArmView</header></customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>
