@@ -31,7 +31,7 @@ UDP_TIMEOUT_S = 0.15  # 从端状态新鲜时限，单位 s；运动联调前按
 QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
-CAN_PERIOD_S = 0.001  # CAN FD 周期目标间隔，单位 s；每轮收齐所选节点反馈后再发下一轮
+CAN_CYCLE_DELAY_S = 0  # 本轮 CAN FD 反馈收齐后到下一轮的等待时间，单位 s；0 表示立即继续
 TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
 PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩短 CAN 回包就绪后等待界面线程的时间
 
@@ -223,7 +223,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bus = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX,
                        CANFD_CHANNEL_INDEX, QUERY_TIMEOUT_S)
         self.worker = CanWorker(
-            bus, self.ui.listenOnly.isChecked(), period=CAN_PERIOD_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
+            bus, self.ui.listenOnly.isChecked(), cycle_delay=CAN_CYCLE_DELAY_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
             pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
             tool_update_cycles=TOOL_UPDATE_CYCLES,
             controller=ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES),

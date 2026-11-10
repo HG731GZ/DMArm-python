@@ -18,7 +18,7 @@
 | ZLG CAN FD 设备、通道与厂商 SDK 路径 | `CANFD_DEVICE_INDEX`、`CANFD_CHANNEL_INDEX`、`ZLG_SDK_DIR_WIN`、`ZLG_SDK_DIR_LINUX` | 设备 0、通道 0。Windows 使用项目内的 `zlgcan_x64/`，Linux 使用 `zlgcan_linux_x64/` |
 | CAN FD 周期发送方式 | `CANFD_USE_TX_QUEUE` | Windows 和 Ubuntu 均默认为 `True`（队列发送），改为 `False` 可直接批发 |
 | 界面刷新及主端 UDP 发送周期 | `UI_REFRESH_MS`、`UDP_SEND_PERIOD_MS` | 10 ms、5 ms |
-| CAN FD 周期目标间隔、Python 线程切换间隔 | `CAN_PERIOD_S`、`PYTHON_SWITCH_INTERVAL_S` | 1 ms、0.25 ms。六轴每轮发送，收齐本轮参与节点的反馈后再发下一轮 |
+| CAN FD 轮间等待、Python 线程切换间隔 | `CAN_CYCLE_DELAY_S`、`PYTHON_SWITCH_INTERVAL_S` | 0.9 ms、0.25 ms。常规发送每轮收齐并核对参与节点的反馈后，再等待设定时长。等待设为 0 时直接进入下一轮。停止命令可提前唤醒线程 |
 | 夹钳指令发送间隔 | `TOOL_UPDATE_CYCLES` | 默认 50 轮，从每次开始发送起在第 50、100、150…轮加入夹钳。设为 1 时每轮加入 |
 | PV 限速及回预设位的目标关节角 | `PV_SPEED_LIMIT_RAD_S`、`UR_HOME_RAD` | 原版限速 0.5 rad/s。回预设位六轴依次为 `(-π/2, -π/2, -π/2, -π/2, π/2, 0)` rad |
 | 各轴重力补偿增益与开关 | `GRAVITY_GAIN`、`GRAVITY_AXES` | 原版 J4 ×1.2、其余 ×1.1。按 J1～J6 排列，改为 False 可单独关闭该轴的 MIT 补偿 |

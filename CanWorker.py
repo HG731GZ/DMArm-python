@@ -1,8 +1,10 @@
 """CAN FD 独占线程，串行执行操作，向 Qt 发布完整状态快照。"""
 
 from collections import deque
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
-from math import degrees
+from math import degrees, isfinite
+import sys
 from threading import Condition, Thread
 from time import monotonic, perf_counter
 
@@ -45,7 +47,7 @@ class Snapshot:
 
 
 class CanWorker(Thread):
-    def __init__(self, bus, listen_only, period, speed_limit, pose_period, *, queued_cycles,
+    def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
                  tool_update_cycles, controller=None):
         super().__init__(name="DMArm-CAN-FD")
         if type(tool_update_cycles) is not int or tool_update_cycles < 1:
@@ -60,10 +62,13 @@ class CanWorker(Thread):
         self.listen_only = listen_only
         self.tracking = False
         self.pose_period = pose_period
-        self.period = period
+        if not isfinite(cycle_delay) or cycle_delay < 0:
+            raise ValueError("CAN FD 轮间等待时间必须为非负有限秒数")
+        self.cycle_delay = cycle_delay
         self.queued_cycles = queued_cycles
         self.speed_limit = speed_limit
         self.cv = Condition()
+        self.waiting_timer = None
         self.pending = None
         self.current = "open"
         self.events = deque(maxlen=250)
@@ -119,7 +124,10 @@ class CanWorker(Thread):
             if self.current and priority <= PRIORITY.get(self.current, 0):
                 return False
             self.pending = (action, tuple(nodes))
-            self.cv.notify()
+            if self.waiting_timer is None:
+                self.cv.notify()
+            else:
+                self.waiting_timer.wake()
             return True
 
     def can_close(self):
@@ -304,7 +312,7 @@ class CanWorker(Thread):
         elapsed = now - self.run_started_at
         if elapsed > 0:
             self.hz = self.run_cycles / elapsed
-        self.next_cycle = max(now, self.next_cycle + self.period)
+        self.next_cycle = now + self.cycle_delay
 
     def check_enabled_feedback(self, nodes):
         for node in nodes:
@@ -342,7 +350,6 @@ class CanWorker(Thread):
         if not self.streaming:
             return
         # 新模式的首个控制周期按最新反馈填入已开启的 MIT 重力矩。
-        self.next_cycle = perf_counter()
         self.cycle()
         angle_change, node = max((abs(self.bus.motors[n].feedback.position - fb.position), n)
                                  for n, fb in feedback.items())
@@ -568,7 +575,13 @@ class CanWorker(Thread):
                 if not self.listen_only and not self.pending:
                     self.pending = ("read", ())
                 self.publish()
-            self.loop()
+            with ExitStack() as resources:
+                timer = None
+                if sys.platform == "win32" and not self.listen_only and self.cycle_delay > 0:
+                    from WinCycleTimer import WinCycleTimer
+                    timer = WinCycleTimer()
+                    resources.callback(timer.close)
+                self.loop(timer)
         except (ZlgError, OSError, AttributeError) as error:
             self.report(f"设备错误：{error}")
         finally:
@@ -585,7 +598,7 @@ class CanWorker(Thread):
             self.current = None
             self.publish()
 
-    def loop(self):
+    def loop(self, timer):
         while not self.done:
             with self.cv:
                 command = self.pending
@@ -620,6 +633,16 @@ class CanWorker(Thread):
             with self.cv:
                 self.current = None
                 self.publish()
-                delay = max(0, self.next_cycle - perf_counter()) if self.streaming else 0.005
-                if delay > 0 and not self.pending and not self.done:
+                delay = self.next_cycle - perf_counter() if self.streaming else 0.005
+                if delay <= 0 or self.pending or self.done:
+                    continue
+                if not self.streaming or timer is None:
                     self.cv.wait(delay)
+                    continue
+                # 在锁内登记等待者，释放锁后即使尚未进入内核等待也能收到命令事件。
+                self.waiting_timer = timer
+            try:
+                timer.wait_until(self.next_cycle)
+            finally:
+                with self.cv:
+                    self.waiting_timer = None
