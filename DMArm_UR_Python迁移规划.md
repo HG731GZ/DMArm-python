@@ -15,7 +15,7 @@
 | 在 `main.py` 顶部调什么 | 建议名称 | UR 主端的初始取值 |
 | --- | --- | --- |
 | 主端监听地址、从端目的地址 | `UDP_LOCAL_IP`、`UDP_LOCAL_PORT`、`UDP_REMOTE_IP`、`UDP_REMOTE_PORT` | 本机 `192.168.3.5:6005`，从端 `192.168.3.14:5005` |
-| ZLG CAN FD 设备、通道与厂商 SDK 路径 | `CANFD_DEVICE_INDEX`、`CANFD_CHANNEL_INDEX`、`ZLG_SDK_DIR_WIN`、`ZLG_SDK_DIR_LINUX` | 设备 0、通道 0。两端路径在 P1 按实际 SDK 填写 |
+| ZLG CAN FD 设备、通道与厂商 SDK 路径 | `CANFD_DEVICE_INDEX`、`CANFD_CHANNEL_INDEX`、`ZLG_SDK_DIR_WIN`、`ZLG_SDK_DIR_LINUX` | 设备 0、通道 0。Windows 使用项目内的 `zlgcan_x64/`，Linux 使用 `zlgcan_linux_x64/` |
 | CAN FD 周期发送方式 | `CANFD_USE_TX_QUEUE` | Windows 和 Ubuntu 均默认为 `True`（队列发送），改为 `False` 可直接批发 |
 | 界面刷新及主端 UDP 发送周期 | `UI_REFRESH_MS`、`UDP_SEND_PERIOD_MS` | 10 ms、5 ms |
 | CAN FD 周期目标间隔、Python 线程切换间隔 | `CAN_PERIOD_S`、`PYTHON_SWITCH_INTERVAL_S` | 1 ms、0.25 ms。整臂每轮批发七帧，收齐七个节点的有效反馈后再发下一轮 |
@@ -97,9 +97,9 @@ conda run -n dmarm python main.py
 | --- | --- |
 | Ubuntu 离线主窗 | Ubuntu 22.04.5 x86_64，`dmarm` 的 Python 3.10.22、PyQt5 5.15.11、NumPy 2.2.6。已重新生成 UI、静态编译并从终端启动根目录 `main.py`。未连接时六轴显示“—”。临时将目的端口从 5005 改为 5015，重开核对后恢复为 5005。PyCharm 项目解释器已配置为 `dmarm`。 |
 | 现场设备 | USB `3068:0009`，ZLG USBCANFD-100U-mini，SN `6A44B05E60D204740CB0`，类型 43、设备 0、通道 0。板卡报告硬件 `0x0300`、固件 `0x0226`、接口 `0x0100`。现场确认六轴和夹钳失能。 |
-| Linux SDK | 使用本机 `~/LMX/usbcanfd_libusb_x64_1.0.13_260316` 的库及头文件，SO 版本 1.0.13。用 `file`、`ldd`、`nm -D` 核对架构、依赖与 VCI 导出。现有 `/etc/udev/rules.d/50-usbcanfd.rules` 已授予此卡普通用户读写权限。 |
+| Linux SDK | 现场使用的厂商库 1.0.13 已随项目放在 `zlgcan_linux_x64/libusbcanfd.so`。Ubuntu x86_64 使用系统包 `libusb-1.0-0`。新机上将随附的 `zlgcan_linux_x64/50-usbcanfd.rules` 安装到 `/etc/udev/rules.d/`，执行 `sudo udevadm control --reload-rules` 后重新插入适配器，即可按现场配置授予普通用户 USB 访问权限。 |
 | Ubuntu 真机 | 以普通用户在主窗打开设备。ISO CAN FD 只听，仲裁 1 Mbit/s、数据 5 Mbit/s，采样点均为 75%，内部终端电阻开启。两次各监听约 5 秒，均收到 0 帧。分别用“关闭设备”和直接关窗结束，通道复位和设备关闭均成功，USB 节点已释放。全程发送 0 帧，按空总线验收。 |
-| Windows 准备 | 厂商 `CAN_lib.zip` 的完整 `zlgcan_x64` 解压到项目根目录，与 `main.py` 顶部的默认路径一致。SDK 目录在 Git 忽略列表中，换机时复制该目录或重新解压。须安装该卡 Windows 驱动及 DLL 依赖的 x64 VC++ 2013 运行库。主 DLL 产品版本 `20250723`，主 DLL 和 `kerneldlls/USBCANFD.dll` 都是 PE32+ x86-64。已核对类型 43 映射、导出及属性路径。 |
+| Windows 准备 | 项目内的 `zlgcan_x64/` 包含主库 `zlgcan.dll`（产品版本 `20250723`）、`kerneldlls/USBCANFD.dll`、类型 43 的 DLL 和属性配置，以及厂商许可证。两份 DLL 均为 PE32+ x86-64。新机须安装该卡 Windows 驱动和 x64 VC++ 2013 运行库。 |
 | 结构尺寸 | 按厂商头文件核对 ctypes。Linux 板卡信息 79 B、初始化 20 B、FD 帧 80 B。Windows x64 句柄 8 B、板卡信息 80 B、初始化 32 B、FD 发送项 76 B、接收项 80 B。 |
 | 待现场验收 | Windows x64 用同一适配器打开通道、监听并关闭设备。真实 FD 帧的 ID、格式、BRS、长度及载荷需在有流量时记录；首个电机应答留到 P2。 |
 

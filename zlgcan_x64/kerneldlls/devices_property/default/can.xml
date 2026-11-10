@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<info locale="device_locale_strings.xml">
+	<DeviceType>
+		<value>43</value>
+		<meta>
+			<type>options.int32</type>
+			<desc>device type</desc>
+			<options>
+				<option type="int32" value="43" desc="USBCANFD-MINI" />
+			</options>
+		</meta>
+		<USBCANFD-MINI stream="USBCANFD-MINI" case="parent-value=43">
+			<include_file>
+				<value>usbcanfd-100u.xml</value>
+				<meta>
+					<type>string</type>
+					<desc>USBCANFD-MIN config file</desc>
+				</meta>
+			</include_file>
+		</USBCANFD-MINI>
+	</DeviceType>
+</info>
