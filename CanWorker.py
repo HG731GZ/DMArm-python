@@ -29,7 +29,6 @@ class Snapshot:
     uncertain: frozenset
     streaming: bool
     gravity: bool
-    homing: bool
     commands: tuple
     tracking: bool
     coherent: bool
@@ -44,8 +43,7 @@ class Snapshot:
 
 
 class CanWorker(Thread):
-    def __init__(self, bus, listen_only, period, speed_limit, stop_speed, stop_timeout, pose_period,
-                 stop_sample_period=0.010, *, queued_cycles, controller=None):
+    def __init__(self, bus, listen_only, period, speed_limit, pose_period, *, queued_cycles, controller=None):
         super().__init__(name="DMArm-CAN-FD")
         self.bus = bus
         self.controller = controller
@@ -56,9 +54,6 @@ class CanWorker(Thread):
         self.period = period
         self.queued_cycles = queued_cycles
         self.speed_limit = speed_limit
-        self.stop_speed = stop_speed
-        self.stop_timeout = stop_timeout
-        self.stop_sample_period = stop_sample_period
         self.cv = Condition()
         self.pending = None
         self.current = "open"
@@ -86,7 +81,6 @@ class CanWorker(Thread):
                 self.bus.started, bool(self.current or self.pending), self.first_read,
                 frozenset(self.verified), frozenset(self.owned), frozenset(self.uncertain),
                 self.streaming, bool(self.controller and self.controller.gravity_on),
-                bool(self.controller and self.controller.home_targets),
                 tuple(self.commands.get(n) for n in JOINTS), self.tracking, self.coherent, self.faulted,
                 tuple((m.mode_text, m.feedback) for m in self.bus.motors.values()),
                 self.message, self.bus.tx, self.bus.rx, self.bus.failed, self.cycles, self.hz,
@@ -147,7 +141,10 @@ class CanWorker(Thread):
     def disable(self, nodes):
         """即使某轴失联，也给其余目标逐台发失能。仅状态回读 0 才销账。"""
         self.streaming = False
-        self.clear_targets()
+        self.targets.clear()
+        self.commands.clear()
+        if self.controller:
+            self.controller.gravity_on = False
         clearing_error = None
         try:
             self.bus.backend.clear_transmit_queue()
@@ -187,38 +184,21 @@ class CanWorker(Thread):
         self.report(f"失能已确认 {sorted(nodes)}")
         return True
 
-    def clear_targets(self):
-        self.targets.clear()
-        self.commands.clear()
-        if self.controller:
-            self.controller.reset()
-
-    def target(self, node, fb):
-        motor = self.bus.motors[node]
-        return motor.command_id, motor.resting_target(fb.position, self.speed_limit)
+    def clear_motor_command(self, node):
+        self.targets[node] = self.bus.motors[node].empty_target()
+        self.commands[node] = 0.0
 
     def enable(self, nodes):
         if self.owned or self.uncertain or not self.coherent or not set(nodes) <= self.verified:
             raise ZlgError("请先完成目标轴失能确认和模式核对")
-        # 在首个使能帧之前，核对所有目标的模式、状态及可用的静止载荷。
         for node in nodes:
-            self.mode(node)
-            self.target(node, self.require_off(node))
-        for node in nodes:
-            motor = self.bus.motors[node]
-            fb = self.require_off(node)
-            if motor.mode != 1 and abs(fb.velocity) > self.stop_speed:
-                raise ZlgError(f"ID {node} 仍在运动，无法建立当前位置目标")
-            target = self.target(node, fb)
-            self.bus.exchange([target], {node: Read.STATUS}, self.checkpoint, self.log)
-            if motor.feedback.status != 0:
-                raise ZlgError(f"ID {node} 静止目标预置后未回读失能")
+            self.special(node, 0xFB)
+            self.clear_motor_command(node)
             self.owned.add(node)
             self.verified.discard(node)
             self.special(node, 0xFC)
             if self.status(node).status != 1:
                 raise ZlgError(f"ID {node} 使能未确认")
-        self.next_monitor = monotonic()
         self.report(f"使能已回读 {sorted(self.owned)}")
 
     def switch_mode(self, value, nodes=JOINTS):
@@ -240,7 +220,7 @@ class CanWorker(Thread):
         return replies
 
     def write_modes(self, value, nodes):
-        continuing = {n: target for n, target in self.targets.items() if n not in nodes}
+        continuing = {n: target for n, target in self.targets.items() if self.streaming and n not in nodes}
         writes = {n: bytes((n, 0, 0x55, MODE_REGISTER, value, 0, 0, 0)) for n in nodes}
         self.coherent = False
         replies = self.exchange_mode_register(writes, Read.MODE_WRITE, continuing)
@@ -257,13 +237,12 @@ class CanWorker(Thread):
     def start_cycles(self):
         if not self.owned or self.uncertain or not self.coherent:
             raise ZlgError("周期发送需要已确认使能的目标轴")
-        self.targets.clear()
         for node in sorted(self.owned):
             fb = self.status(node)
             if fb.status != 1:
                 raise ZlgError(f"ID {node} 状态为 {fb.status_text}")
-            self.targets[node] = self.target(node, fb)
-            self.commands[node] = 0.0 if self.bus.motors[node].mode == 1 else fb.position
+            if node not in self.targets:
+                self.clear_motor_command(node)
         if self.queued_cycles:
             self.bus.backend.enable_transmit_queue()
         self.expected_feedback = dict.fromkeys(self.targets, Read.STATUS)
@@ -280,7 +259,7 @@ class CanWorker(Thread):
         ctl = self.controller
         motors = self.bus.motors
         if ctl and ctl.gravity_on and any(motors[n].mode == 1 for n in JOINTS):
-            torques = ctl.gravity_commands(motors, monotonic())
+            torques = ctl.gravity_commands(motors)
             for node in JOINTS:
                 motor = motors[node]
                 if motor.mode == 1:
@@ -290,15 +269,6 @@ class CanWorker(Thread):
         self.bus.exchange(self.targets.values(), self.expected_feedback,
                           self.checkpoint, queued=self.queued_cycles)
         self.check_enabled_feedback(self.targets)
-        if ctl and ctl.home_targets:
-            if all(abs(self.bus.motors[n].feedback.position - pos) <= ctl.arrival_rad
-                   and abs(self.bus.motors[n].feedback.velocity) <= self.stop_speed
-                   for n, pos in ctl.home_targets.items()):
-                ctl.home_targets.clear()
-                self.report("六轴已到预设位，继续 PV 持位")
-            elif monotonic() >= ctl.home_deadline:
-                self.stop()
-                self.report("回预设位超时，已按实测位置停住")
         self.cycles += 1
         self.run_cycles += 1
         now = perf_counter()
@@ -315,40 +285,8 @@ class CanWorker(Thread):
 
     def stop(self):
         self.streaming = False
-        self.clear_targets()
         self.bus.backend.clear_transmit_queue()
-        neutral = {}
-        holding = {}
-        for node in sorted(self.owned):
-            if self.bus.motors[node].mode in (2, 4):
-                fb = self.status(node)
-                if fb.status != 1:
-                    raise ZlgError(f"ID {node} 持位前状态为 {fb.status_text}")
-                holding[node] = self.target(node, fb)
-            elif self.bus.motors[node].mode == 1:
-                motor = self.bus.motors[node]
-                neutral[node] = motor.command_id, motor.encode_mit(0, 0, 0, 0, 0)
-        if neutral:
-            self.bus.exchange(list(neutral.values()), dict.fromkeys(neutral, Read.STATUS), self.checkpoint)
-            if any(self.bus.motors[n].feedback.status != 1 for n in neutral):
-                raise ZlgError("清零 MIT 力矩时反馈退出使能")
-        if holding:
-            deadline = monotonic() + self.stop_timeout
-            settled = 0
-            while settled < 3:
-                if monotonic() >= deadline:
-                    raise ZlgError("限速持位后速度未进入停止范围")
-                self.bus.exchange(list(holding.values()), dict.fromkeys(holding, Read.STATUS),
-                                  self.checkpoint)
-                feedback = [self.bus.motors[n].feedback for n in holding]
-                if any(f.status != 1 for f in feedback):
-                    raise ZlgError("持位反馈退出使能")
-                settled = settled + 1 if all(abs(f.velocity) <= self.stop_speed for f in feedback) else 0
-                with self.cv:
-                    self.cv.wait(self.stop_sample_period)
-            self.log(f"持位轴 {sorted(holding)} 连续三次速度达标，末次 rad/s：" +
-                     "、".join(f"{f.velocity:.4f}" for f in feedback))
-        self.report("周期已停止，发送队列已清空")
+        self.report("周期发送已停止，发送队列已清空")
 
     def change_running_mode(self, nodes, value):
         """在使能状态下交接，PV 锁存原始电机角，MIT 首帧沿用当前补偿。"""
@@ -362,25 +300,21 @@ class CanWorker(Thread):
             self.check_enabled_feedback(nodes)
         feedback = {n: self.bus.motors[n].feedback for n in nodes}
         self.write_modes(value, nodes)
-        targets = {n: self.target(n, fb) for n, fb in feedback.items()}
-        if self.streaming:
-            self.targets.update(targets)
-            for n, fb in feedback.items():
-                self.commands[n] = fb.position if value == 2 else 0.0
-            # 立即发送完整的新模式首轮；cycle 在投递前填入已开启的 MIT 重力矩。
-            self.next_cycle = perf_counter()
-            self.cycle()
-        else:
-            self.bus.exchange(targets.values(), dict.fromkeys(nodes, Read.STATUS), self.checkpoint, self.log)
-            self.check_enabled_feedback(nodes)
+        for n, fb in feedback.items():
+            motor = self.bus.motors[n]
+            if value == 2:
+                self.targets[n] = motor.command_id, motor.encode_pv(fb.position, self.speed_limit)
+                self.commands[n] = fb.position
+            else:
+                self.clear_motor_command(n)
+        if not self.streaming:
+            return
+        # 新模式的首个控制周期按最新反馈填入已开启的 MIT 重力矩。
+        self.next_cycle = perf_counter()
+        self.cycle()
         angle_change, node = max((abs(self.bus.motors[n].feedback.position - fb.position), n)
                                  for n, fb in feedback.items())
         self.log(f"换模前末帧至新模式首帧，最大原始角差 J{node} {degrees(angle_change):.3f}°")
-
-    def set_pv_target(self, node, position, speed):
-        motor = self.bus.motors[node]
-        self.targets[node] = motor.command_id, motor.encode_pv(position, speed)
-        self.commands[node] = position
 
     def local_control(self, action, args):
         ctl = self.controller
@@ -390,56 +324,47 @@ class CanWorker(Thread):
         if action in ("lock", "unlock"):
             node, = args
             previous = 1 if action == "lock" else 2
-            if node not in JOINTS or node not in self.owned or motors[node].mode != previous or ctl.home_targets:
+            if node not in JOINTS or node not in self.owned or motors[node].mode != previous:
                 raise ZlgError("当前关节状态不允许此锁定操作")
             self.change_running_mode((node,), 2 if action == "lock" else 1)
-            self.report(f"J{node} 已按实测位置锁定" if action == "lock" else f"J{node} 已释放到 MIT")
+            self.report(f"J{node} 锁定目标已设为实测位置" if action == "lock" else f"J{node} 已释放到 MIT")
             return
         if not self.streaming or not set(JOINTS) <= self.owned:
             raise ZlgError("需要六关节均已使能并周期反馈")
         if action in ("gravity_on", "gravity_off"):
             ctl.gravity_on = action == "gravity_on"
-            if ctl.gravity_on:
-                ctl.gravity_start = monotonic()
-            else:
+            if not ctl.gravity_on:
                 for n in JOINTS:
                     if motors[n].mode == 1:
-                        self.targets[n] = self.target(n, motors[n].feedback)
-                        self.commands[n] = 0.0
+                        self.clear_motor_command(n)
             self.report("MIT 重力补偿已开启" if ctl.gravity_on else "MIT 重力补偿已关闭")
             return
-        # 六轴全部进入 PV 并回读后，才发布同一批预设目标。
-        self.change_running_mode(tuple(n for n in JOINTS if motors[n].mode != 2), 2)
         positions = ctl.motor_home(motors)
-        travel = max(abs(motors[n].feedback.position - pos) for n, pos in positions.items())
-        ctl.home_deadline = monotonic() + travel / ctl.home_speed + self.stop_timeout
+        switching = tuple(n for n in JOINTS if motors[n].mode != 2)
+        if switching:
+            self.write_modes(2, switching)
         for n, pos in positions.items():
-            self.set_pv_target(n, pos, ctl.home_speed)
-        ctl.home_targets = positions
-        self.report(f"六轴回预设位，PV 限速 {ctl.home_speed:g} rad/s")
+            motor = motors[n]
+            self.targets[n] = motor.command_id, motor.encode_pv(pos, self.speed_limit)
+            self.commands[n] = pos
+        self.report(f"已设置六轴 PV 预设目标，限速 {self.speed_limit:g} rad/s")
 
     def set_zero(self, node):
-        if (self.owned != set(ALL) or self.streaming or self.faulted or self.uncertain
-                or not self.coherent or node not in JOINTS):
-            self.report("零位设定需要整臂已使能、周期发送已停止，并选择 J1～J6")
+        if (self.streaming or self.tracking or self.faulted or self.uncertain or not self.coherent
+                or node not in JOINTS or node not in (self.owned | self.verified)):
+            self.report("请停止周期收发，并选择已读取状态的关节设零")
             return
-        self.mode(node)
-        fb = self.status(node)
-        if fb.status != 1:
-            raise ZlgError(f"J{node} 设零前回读 {fb.status_text}")
-        if abs(fb.velocity) > self.stop_speed:
-            self.report(f"J{node} 仍在运动，请停在机械参考位后设零")
-            return
+        motor = self.bus.motors[node]
+        target = motor.empty_target()
+        # 先替换旧坐标目标，设零之后再向电机发送空指令。
+        if node in self.owned:
+            self.targets[node] = target
+            self.commands[node] = 0.0
         self.special(node, 0xFE)
-        fb = self.status(node)
-        if fb.status != 1:
+        self.bus.exchange([target], {node: Read.STATUS}, self.checkpoint, self.log)
+        fb = motor.feedback
+        if fb.status != int(node in self.owned):
             raise ZlgError(f"J{node} 设零后回读 {fb.status_text}")
-        if self.bus.motors[node].mode == 2:
-            # 零点已改变，PV 改用新坐标下的当前位置持位。
-            self.bus.exchange([self.target(node, fb)], {node: Read.STATUS}, self.checkpoint, self.log)
-            fb = self.bus.motors[node].feedback
-            if fb.status != 1:
-                raise ZlgError(f"J{node} 设零后持位回读 {fb.status_text}")
         self.report(f"J{node} 设零已应答，回读位置 {fb.position:.4f} rad，{fb.status_text}")
 
     def dispatch(self, action, nodes):
@@ -447,10 +372,6 @@ class CanWorker(Thread):
             self.tracking = False
         if action in ("close", "release"):
             if action == "close" and (self.owned or self.uncertain):
-                try:
-                    self.stop()
-                except (ZlgError, OSError) as error:
-                    self.log(f"停发确认失败：{error}")
                 if not self.disable(self.owned | self.uncertain):
                     return
             self.physically_stopped = action == "release"
@@ -469,8 +390,6 @@ class CanWorker(Thread):
         if action in ("disable", "disable_all"):
             if action == "disable_all":
                 nodes = ALL
-            if self.owned.difference(nodes):
-                self.stop()
             self.disable(set(nodes))
             return
         if action == "stop":
@@ -589,11 +508,6 @@ class CanWorker(Thread):
                     self.sample_pose()
                 elif self.streaming and perf_counter() >= self.next_cycle:
                     self.cycle()
-                elif self.owned and not self.uncertain and monotonic() >= self.next_monitor and not self.streaming:
-                    for node in sorted(self.owned):
-                        if self.status(node, verbose=False).status != 1:
-                            raise ZlgError(f"ID {node} 主动状态回读退出使能")
-                    self.next_monitor = monotonic() + 0.1
                 elif not self.faulted:
                     self.bus.receive(log=None if self.streaming else self.log)
             except OperationInterrupted:

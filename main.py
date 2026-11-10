@@ -28,18 +28,12 @@ POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
 CAN_PERIOD_S = 0.001  # CAN FD 周期目标间隔，单位 s；每轮收齐所选节点反馈后再发下一轮
 PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩短 CAN 回包就绪后等待界面线程的时间
-PV_HOLD_SPEED_RAD_S = 0.05  # P3 原位持位限速，单位 rad/s
-STOP_SPEED_RAD_S = 0.05  # 持位后连续三帧的停止速度阈值，单位 rad/s
-STOP_SAMPLE_PERIOD_S = 0.010  # PV 停止确认的采样间隔，单位 s
-STOP_TIMEOUT_S = 1.0  # 持位停止确认时限，单位 s
 
 # 按 J1～J6 排列。把某一项改为 False，该轴 MIT 前馈力矩即为零，重启主窗生效。
 GRAVITY_AXES = (True, True, True, True, True, True)
 GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率，无单位
-GRAVITY_RAMP_S = 1.0  # 开启补偿至设定倍率的渐入时间，单位 s
 UR_HOME_RAD = (-pi/2, -pi/2, -pi/2, -pi/2, pi/2, 0)  # DH 预设关节角，单位 rad
-PV_SPEED_LIMIT_RAD_S = 0.05  # 回预设位的首次调试限速，单位 rad/s；原 C# 为 0.5
-HOME_TOLERANCE_RAD = 0.02  # 六轴到位角度容差，单位 rad
+PV_SPEED_LIMIT_RAD_S = 0.5  # PV 位置指令的速度上限，单位 rad/s
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -123,11 +117,9 @@ class MainWindow(QtWidgets.QMainWindow):
         bus = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX,
                        CANFD_CHANNEL_INDEX, QUERY_TIMEOUT_S)
         self.worker = CanWorker(
-            bus, self.ui.listenOnly.isChecked(), period=CAN_PERIOD_S, speed_limit=PV_HOLD_SPEED_RAD_S,
-            stop_speed=STOP_SPEED_RAD_S, stop_timeout=STOP_TIMEOUT_S, pose_period=POSE_PERIOD_S,
-            stop_sample_period=STOP_SAMPLE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
-            controller=ArmController(UR_HOME_RAD, PV_SPEED_LIMIT_RAD_S, GRAVITY_GAIN,
-                                     GRAVITY_AXES, GRAVITY_RAMP_S, HOME_TOLERANCE_RAD),
+            bus, self.ui.listenOnly.isChecked(), period=CAN_PERIOD_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
+            pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
+            controller=ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES),
         )
         self.ui.frameLog.clear()
         self.worker.start()
@@ -168,8 +160,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.sendButton.setEnabled((control and state.streaming) or (ready and state.owned == set(ALL)))
         powered = ready and state.coherent and state.owned == set(ALL)
         for btn in (ui.mitButton, ui.pvButton):
-            btn.setEnabled((idle and set(JOINTS) <= state.verified) or (powered and not state.homing))
-        can_zero = powered and not state.streaming
+            btn.setEnabled((idle and set(JOINTS) <= state.verified) or powered)
+        can_zero = ready and state.coherent and state.first_read and not (state.streaming or state.tracking)
         ui.zeroButton.setEnabled(can_zero)
         if self.zero_dialog.isVisible() and not can_zero:
             self.zero_dialog.reject()
@@ -178,11 +170,11 @@ class MainWindow(QtWidgets.QMainWindow):
         modes = [mode for mode, _ in state.motors[:6]]
         ui.gravityButton.setEnabled(six_active)
         ui.gravityButton.setText("关闭重力补偿" if state.gravity else "开启重力补偿")
-        ui.homeButton.setEnabled(six_active and not state.homing)
+        ui.homeButton.setEnabled(six_active)
         for button in (ui.toolMitButton, ui.toolPvtButton):
             button.setEnabled(idle and 7 in state.verified)
         for node, button, mode, value in zip(JOINTS, self.lock_buttons, modes, state.commands):
-            button.setEnabled(powered and mode in ("MIT", "PV") and not state.homing)
+            button.setEnabled(powered and mode in ("MIT", "PV"))
             button.setText(f"J{node} 释放" if mode == "PV" and node in state.owned else f"J{node} 锁定")
             unit = "rad" if mode == "PV" else "N·m"
             self.ui.anglesTable.item(node - 1, 5).setText("—" if value is None else f"{value:.3f} {unit}")

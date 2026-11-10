@@ -86,15 +86,17 @@ class DMMotor:
     def command_id(self):
         return self.node + {1: 0, 2: 0x100, 3: 0x200, 4: 0x300}[self.mode]
 
-    def resting_target(self, position, speed_limit):
-        """按已读模式生成零增益 MIT 或当前电机位置的限速目标。"""
+    def empty_target(self):
+        """按原主端生成当前模式的空指令，位置、限速、力矩和增益均为零。"""
         if self.mode == 1:
-            return self.encode_mit(0, 0, 0, 0, 0)
-        if self.mode == 2:
-            return self.encode_pv(position, speed_limit)
-        if self.mode == 4 and self.node == 7 and position <= 2.35:
-            return self.encode_pvt(position, speed_limit, 0)
-        raise ValueError(f"ID {self.node} 的模式或位置不支持本阶段的静止目标")
+            data = self.encode_mit(0, 0, 0, 0, 0)
+        elif self.mode == 2:
+            data = self.encode_pv(0, 0)
+        elif self.mode == 4 and self.node == 7:
+            data = self.encode_pvt(0, 0, 0)
+        else:
+            raise ValueError(f"ID {self.node} 不支持以 {self.mode_text} 模式发送控制指令")
+        return self.command_id, data
 
     def encode_mit(self, position, velocity, torque, kp, kd):
         """按电机协议量程编码 MIT 目标，返回八字节载荷。"""
