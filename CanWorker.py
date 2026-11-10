@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from math import degrees
 from threading import Condition, Thread
-from time import monotonic
+from time import monotonic, perf_counter
 
 from DMMotor import MODE_REGISTER, PARAM_ID, Read
 from USBCANFD import OperationInterrupted
@@ -267,7 +267,8 @@ class CanWorker(Thread):
         if self.queued_cycles:
             self.bus.backend.enable_transmit_queue()
         self.expected_feedback = dict.fromkeys(self.targets, Read.STATUS)
-        self.next_cycle = monotonic()
+        # 毫秒级发送调度和频率统计共用高分辨率单调时钟。
+        self.next_cycle = perf_counter()
         self.run_started_at = self.next_cycle
         self.hz = 0.0
         self.run_cycles = 0
@@ -300,8 +301,10 @@ class CanWorker(Thread):
                 self.report("回预设位超时，已按实测位置停住")
         self.cycles += 1
         self.run_cycles += 1
-        now = monotonic()
-        self.hz = self.run_cycles / (now - self.run_started_at)
+        now = perf_counter()
+        elapsed = now - self.run_started_at
+        if elapsed > 0:
+            self.hz = self.run_cycles / elapsed
         self.next_cycle = max(now, self.next_cycle + self.period)
 
     def check_enabled_feedback(self, nodes):
@@ -365,7 +368,7 @@ class CanWorker(Thread):
             for n, fb in feedback.items():
                 self.commands[n] = fb.position if value == 2 else 0.0
             # 立即发送完整的新模式首轮；cycle 在投递前填入已开启的 MIT 重力矩。
-            self.next_cycle = monotonic()
+            self.next_cycle = perf_counter()
             self.cycle()
         else:
             self.bus.exchange(targets.values(), dict.fromkeys(nodes, Read.STATUS), self.checkpoint, self.log)
@@ -584,7 +587,7 @@ class CanWorker(Thread):
                     self.dispatch(*command)
                 elif self.tracking and monotonic() >= self.next_monitor:
                     self.sample_pose()
-                elif self.streaming and monotonic() >= self.next_cycle:
+                elif self.streaming and perf_counter() >= self.next_cycle:
                     self.cycle()
                 elif self.owned and not self.uncertain and monotonic() >= self.next_monitor and not self.streaming:
                     for node in sorted(self.owned):
@@ -613,6 +616,6 @@ class CanWorker(Thread):
             with self.cv:
                 self.current = None
                 self.publish()
-                delay = max(0, self.next_cycle - monotonic()) if self.streaming else 0.005
+                delay = max(0, self.next_cycle - perf_counter()) if self.streaming else 0.005
                 if delay > 0 and not self.pending and not self.done:
                     self.cv.wait(delay)
