@@ -12,7 +12,7 @@ from zlgcan import ZlgError
 
 JOINTS = tuple(range(1, 7))
 ALL = (*JOINTS, 7)
-PRIORITY = {"stop": 1, "disable": 2, "disable_all": 3, "close": 4, "release": 5}
+PRIORITY = {"stop": 1, "disable": 2, "disable_all": 3, "close": 4}
 
 
 def uninterrupted():
@@ -40,13 +40,22 @@ class Snapshot:
     failed: int
     cycles: int
     hz: float
+    feedback_at: float
+    remote_action: str
 
 
 class CanWorker(Thread):
-    def __init__(self, bus, listen_only, period, speed_limit, pose_period, *, queued_cycles, controller=None):
+    def __init__(self, bus, listen_only, period, speed_limit, pose_period, *, queued_cycles,
+                 tool_update_cycles, controller=None):
         super().__init__(name="DMArm-CAN-FD")
+        if type(tool_update_cycles) is not int or tool_update_cycles < 1:
+            raise ValueError("夹钳发送间隔必须为正整数（轮）")
+        self.tool_update_cycles = tool_update_cycles
         self.bus = bus
         self.controller = controller
+        self.remote_link = None
+        self.remote_action = ""
+        self.remote_frame = None
         self.commands = {}
         self.listen_only = listen_only
         self.tracking = False
@@ -70,7 +79,6 @@ class CanWorker(Thread):
         self.hz = 0.0
         self.next_cycle = self.next_monitor = 0.0
         self.message = "正在打开设备"
-        self.physically_stopped = False
         self.done = False
         self.faulted = False
         self.publish()
@@ -84,6 +92,7 @@ class CanWorker(Thread):
                 tuple(self.commands.get(n) for n in JOINTS), self.tracking, self.coherent, self.faulted,
                 tuple((m.mode_text, m.feedback) for m in self.bus.motors.values()),
                 self.message, self.bus.tx, self.bus.rx, self.bus.failed, self.cycles, self.hz,
+                min(m.feedback_at for m in self.bus.motors.values()), self.remote_action,
             )
 
     def snapshot(self):
@@ -102,7 +111,7 @@ class CanWorker(Thread):
 
     def submit(self, action, nodes=()):
         with self.cv:
-            if self.done:
+            if self.done or (action == "close" and not self.can_close()):
                 return False
             priority = PRIORITY.get(action, 0)
             if self.pending and priority <= PRIORITY.get(self.pending[0], 0):
@@ -112,6 +121,12 @@ class CanWorker(Thread):
             self.pending = (action, tuple(nodes))
             self.cv.notify()
             return True
+
+    def can_close(self):
+        """查询可以中断，周期启停、换模和使失能操作须先完成。"""
+        with self.cv:
+            return (not self.streaming and self.current in (None, "open", "read", "first", "pose_on")
+                    and (self.pending is None or self.pending[0] == "read"))
 
     def checkpoint(self):
         with self.cv:
@@ -142,6 +157,7 @@ class CanWorker(Thread):
         """即使某轴失联，也给其余目标逐台发失能。仅状态回读 0 才销账。"""
         self.streaming = False
         self.targets.clear()
+        self.clear_remote()
         self.commands.clear()
         if self.controller:
             self.controller.gravity_on = False
@@ -220,7 +236,9 @@ class CanWorker(Thread):
         return replies
 
     def write_modes(self, value, nodes):
-        continuing = {n: target for n, target in self.targets.items() if self.streaming and n not in nodes}
+        # 寄存器写入与回读是额外批次；分频发送的夹钳只在到期的控制轮中加入。
+        continuing = {n: target for n, target in self.targets.items()
+                      if self.streaming and n not in nodes and (n != 7 or self.tool_update_cycles == 1)}
         writes = {n: bytes((n, 0, 0x55, MODE_REGISTER, value, 0, 0, 0)) for n in nodes}
         self.coherent = False
         replies = self.exchange_mode_register(writes, Read.MODE_WRITE, continuing)
@@ -242,10 +260,15 @@ class CanWorker(Thread):
             if fb.status != 1:
                 raise ZlgError(f"ID {node} 状态为 {fb.status_text}")
             if node not in self.targets:
-                self.clear_motor_command(node)
+                motor = self.bus.motors[node]
+                if motor.mode == 2:
+                    self.set_positions({node: fb.position})
+                else:
+                    self.clear_motor_command(node)
         if self.queued_cycles:
             self.bus.backend.enable_transmit_queue()
         self.expected_feedback = dict.fromkeys(self.targets, Read.STATUS)
+        self.joint_feedback = {n: Read.STATUS for n in JOINTS if n in self.targets}
         # 毫秒级发送调度和频率统计共用高分辨率单调时钟。
         self.next_cycle = perf_counter()
         self.run_started_at = self.next_cycle
@@ -258,6 +281,8 @@ class CanWorker(Thread):
     def cycle(self):
         ctl = self.controller
         motors = self.bus.motors
+        if self.remote_action:
+            self.update_remote()
         if ctl and ctl.gravity_on and any(motors[n].mode == 1 for n in JOINTS):
             torques = ctl.gravity_commands(motors)
             for node in JOINTS:
@@ -266,9 +291,13 @@ class CanWorker(Thread):
                     torque = max(-motor.max_torque, min(motor.max_torque, torques[node - 1]))
                     self.targets[node] = motor.command_id, motor.encode_mit(0, 0, torque, 0, 0)
                     self.commands[node] = torque
-        self.bus.exchange(self.targets.values(), self.expected_feedback,
-                          self.checkpoint, queued=self.queued_cycles)
-        self.check_enabled_feedback(self.targets)
+        expected = self.joint_feedback
+        if (self.run_cycles + 1) % self.tool_update_cycles == 0:
+            expected = self.expected_feedback
+        if expected:
+            frames = [self.targets[n] for n in expected]
+            self.bus.exchange(frames, expected, self.checkpoint, queued=self.queued_cycles)
+            self.check_enabled_feedback(expected)
         self.cycles += 1
         self.run_cycles += 1
         now = perf_counter()
@@ -284,6 +313,9 @@ class CanWorker(Thread):
                 raise ZlgError(f"ID {node} 反馈退出使能：{fb.status_text}")
 
     def stop(self):
+        if self.remote_action:
+            self.hold_remote("停止发送")
+            self.cycle()
         self.streaming = False
         self.bus.backend.clear_transmit_queue()
         self.report("周期发送已停止，发送队列已清空")
@@ -340,14 +372,54 @@ class CanWorker(Thread):
             self.report("MIT 重力补偿已开启" if ctl.gravity_on else "MIT 重力补偿已关闭")
             return
         positions = ctl.motor_home(motors)
+        ctl.gravity_on = True
         switching = tuple(n for n in JOINTS if motors[n].mode != 2)
         if switching:
             self.write_modes(2, switching)
+        self.set_positions(positions)
+        self.report(f"已设置六轴 PV 预设目标，限速 {self.speed_limit:g} rad/s")
+
+    def set_positions(self, positions):
         for n, pos in positions.items():
-            motor = motors[n]
+            motor = self.bus.motors[n]
             self.targets[n] = motor.command_id, motor.encode_pv(pos, self.speed_limit)
             self.commands[n] = pos
-        self.report(f"已设置六轴 PV 预设目标，限速 {self.speed_limit:g} rad/s")
+
+    def clear_remote(self):
+        self.remote_link = self.remote_frame = None
+        self.remote_action = ""
+
+    def hold_remote(self, reason):
+        self.clear_remote()
+        self.set_positions({n: self.bus.motors[n].feedback.position for n in JOINTS})
+        self.report(f"{reason}，六轴按当前反馈位置持位")
+
+    def start_remote(self, action, link):
+        frame = link.fresh()
+        if (not frame or not self.streaming or self.uncertain or self.faulted or not self.coherent
+                or not set(JOINTS) <= self.owned):
+            self.report("遥操作需要新鲜从端状态及已使能六轴的周期反馈")
+            return
+        self.controller.gravity_on = True
+        switching = tuple(n for n in JOINTS if self.bus.motors[n].mode != 2)
+        if switching:
+            self.change_running_mode(switching, 2)
+            latest = link.fresh()
+            if not latest or latest.generation != frame.generation:
+                self.hold_remote("切换 PV 期间从端断流")
+                return
+            frame = latest
+        self.remote_link, self.remote_frame, self.remote_action = link, frame, action
+        self.set_positions(self.controller.motor_targets(frame.q))
+        self.report("主端持续跟随从端" if action == "follow" else "主端已锁存一次同步目标")
+
+    def update_remote(self):
+        frame = self.remote_link.fresh()
+        if not frame or frame.generation != self.remote_frame.generation:
+            self.hold_remote("从端断流或已断开")
+        elif self.remote_action == "follow" and frame is not self.remote_frame:
+            self.set_positions(self.controller.motor_targets(frame.q))
+            self.remote_frame = frame
 
     def set_zero(self, node):
         if (self.streaming or self.tracking or self.faulted or self.uncertain or not self.coherent
@@ -370,11 +442,7 @@ class CanWorker(Thread):
     def dispatch(self, action, nodes):
         if action in (*PRIORITY, "pose_off"):
             self.tracking = False
-        if action in ("close", "release"):
-            if action == "close" and (self.owned or self.uncertain):
-                if not self.disable(self.owned | self.uncertain):
-                    return
-            self.physically_stopped = action == "release"
+        if action == "close":
             try:
                 self.bus.close()
             except (ZlgError, OSError) as error:
@@ -383,7 +451,7 @@ class CanWorker(Thread):
                 self.done = self.bus.backend is None
                 return
             self.done = True
-            self.report("现场已物理停机，设备已释放" if self.physically_stopped else "CAN FD 设备已释放")
+            self.report("CAN FD 设备已释放")
             return
         if self.listen_only or not self.bus.started:
             raise ZlgError("控制操作需要已启动且可发送的通道")
@@ -395,6 +463,15 @@ class CanWorker(Thread):
         if action == "stop":
             self.stop()
             return
+        if action in ("sync", "follow"):
+            self.start_remote(action, nodes[0])
+            return
+        if action == "remote_off":
+            if self.remote_action:
+                self.hold_remote("人工停止遥操作")
+            return
+        if self.remote_action and action in ("home", "lock", "unlock", "pv", "mit"):
+            self.hold_remote("切换本地控制")
         if action in ("lock", "unlock", "gravity_on", "gravity_off", "home"):
             self.local_control(action, nodes)
             return
@@ -435,16 +512,29 @@ class CanWorker(Thread):
             self.mode(1)
             self.first_read = True
             missing = []
+            enabled = set()
             for node in ALL:
                 try:
                     if node != 1:
                         self.mode(node)
-                    if self.status(node).status == 0:
+                    status = self.status(node).status
+                    if status == 0:
                         self.verified.add(node)
+                    elif status == 1:
+                        enabled.add(node)
                 except (ZlgError, OSError) as error:
                     missing.append(str(node))
                     self.log(str(error))
-            self.report("六轴和夹钳已读取" if not missing else f"待读取节点：{', '.join(missing)}")
+            if enabled == set(ALL):
+                unsupported = [n for n, m in self.bus.motors.items()
+                               if m.mode not in (1, 2) and not (n == 7 and m.mode == 4)]
+                if unsupported:
+                    self.report(f"节点 {unsupported} 的当前模式不支持周期发送")
+                else:
+                    self.owned.update(enabled)
+                    self.report("六轴和夹钳均已使能，可直接开始发送")
+            else:
+                self.report("六轴和夹钳已读取" if not missing else f"待读取节点：{', '.join(missing)}")
         elif action == "enable":
             self.enable(nodes)
         elif action in ("mit", "pv"):
@@ -484,7 +574,7 @@ class CanWorker(Thread):
         finally:
             if self.bus.backend is not None:
                 try:
-                    if self.owned and not self.physically_stopped:
+                    if self.owned and not self.done:
                         self.disable(self.owned.copy())
                 finally:
                     try:
@@ -513,10 +603,10 @@ class CanWorker(Thread):
             except OperationInterrupted:
                 self.log("普通操作已中断，处理停止请求")
                 # 部分使能或换模未核对时先逐轴失能；模式已知时由待处理的停止操作接管。
-                switching = self.current in ("lock", "unlock", "home", "mit", "pv")
+                switching = self.current in ("lock", "unlock", "home", "mit", "pv", "sync", "follow")
                 if self.owned and (self.current == "enable" or (switching and not self.coherent)):
                     self.disable(self.owned.copy())
-            except (ZlgError, OSError, ValueError) as error:
+            except (ZlgError, OSError, ValueError, OverflowError) as error:
                 self.tracking = False
                 message = str(error)
                 self.log(message)

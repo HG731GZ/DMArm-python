@@ -125,7 +125,7 @@
 				</meta>
 			</canfd_dbit_baud_rate>
 			<baud_rate_custom flag="0x0044" at_initcan="pre">
-				<value>1.0Mbps(66%),4.0Mbps(66%),(60,04C00000,01000000)</value>
+				<value>1.0Mbps(75%),5.0Mbps(75%),(60,00000E2B,00800001)</value>
 				<meta>
 					<visible>$/info/channel/channel_0/canfd_abit_baud_rate == 7</visible>
 					<type>string</type>
@@ -340,7 +340,7 @@
 				</meta>
 			</get_bus_usage>
 			<tx_timeout flag="0x0051" at_initcan="post">
-				<value>0</value>
+				<value>100</value>
 				<meta>
 					<type>uint32</type>
 					<visible>false</visible>
@@ -380,7 +380,7 @@
 				</meta>
 			</auto_send_param>
 			<set_send_mode flag="0x0058">
-				<value>0</value>
+				<value>1</value>
 				<meta>
 					<visible>false</visible>
 					<type>uint32</type>

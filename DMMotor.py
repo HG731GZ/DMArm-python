@@ -2,6 +2,7 @@
 
 from enum import Enum
 import struct
+from time import monotonic
 from typing import NamedTuple
 
 PARAM_ID = 0x7FF
@@ -53,6 +54,7 @@ class DMMotor:
         self.max_position, self.max_velocity, self.max_torque = LIMITS[model]
         self.mode = None
         self.feedback = None
+        self.feedback_at = 0.0
 
     @property
     def mode_text(self):
@@ -80,6 +82,7 @@ class DMMotor:
             (torque - 2048) * self.max_torque / 2048,
             data[6], data[7], data[0] >> 4,
         )
+        self.feedback_at = monotonic()
         return Read.STATUS
 
     @property

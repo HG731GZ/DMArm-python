@@ -12,13 +12,15 @@ class ArmController:
 
     def motor_home(self, motors):
         """按原 UR 主端的传动比把预设 DH 角换成电机目标角。"""
-        targets = {}
-        for node, (angle, ratio) in enumerate(zip(self.home, Robot_UR.ratio), 1):
-            target = angle / ratio
+        targets = self.motor_targets(self.home)
+        for node, target in targets.items():
             if abs(target) > motors[node].max_position:
-                raise ValueError(f"J{node} 预设目标超出电机位置量程")
-            targets[node] = target
+                raise ValueError(f"J{node} 目标超出电机位置量程")
         return targets
+
+    @staticmethod
+    def motor_targets(angles):
+        return dict(enumerate(angles / Robot_UR.ratio, 1))
 
     def gravity_commands(self, motors):
         model = Robot_UR.from_feedback([motors[n].feedback for n in range(1, 7)])

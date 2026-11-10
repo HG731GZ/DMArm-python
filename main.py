@@ -1,8 +1,10 @@
 """UR 同构主端窗口。选择 dmarm 解释器后直接运行本文件。"""
 
 from math import degrees, pi
+from datetime import datetime
 from pathlib import Path
 import sys
+from time import monotonic
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
@@ -12,6 +14,7 @@ from ui_Form1 import Ui_Form1
 from ui_ZeroDialog import Ui_ZeroDialog
 from CanWorker import ALL, JOINTS, CanWorker
 from USBCANFD import USBCANFD
+from UdpClass import UdpClass, encode_master
 
 PROJECT_DIR = Path(__file__).resolve().parent
 CANFD_DEVICE_INDEX = 0  # ZLG 设备索引，从 0 起
@@ -23,10 +26,13 @@ UDP_LOCAL_IP = "192.168.3.5"  # 主端监听地址
 UDP_LOCAL_PORT = 6005  # 主端监听端口
 UDP_REMOTE_IP = "192.168.3.14"  # 从端目的地址
 UDP_REMOTE_PORT = 5005  # 从端目的端口
+UDP_SEND_PERIOD_MS = 5  # 主端命令发送间隔，单位 ms
+UDP_TIMEOUT_S = 0.15  # 从端状态新鲜时限，单位 s；运动联调前按现场确认
 QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
 CAN_PERIOD_S = 0.001  # CAN FD 周期目标间隔，单位 s；每轮收齐所选节点反馈后再发下一轮
+TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
 PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩短 CAN 回包就绪后等待界面线程的时间
 
 # 按 J1～J6 排列。把某一项改为 False，该轴 MIT 前馈力矩即为零，重启主窗生效。
@@ -43,6 +49,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.setupUi(self)
         self.last_feedback = None
         self.worker = None
+        self.udp = None
+        self.displayed_frame = None
         self.closing_window = False
         ui.channelLabel.setText(f"设备 {CANFD_DEVICE_INDEX}  /  通道 {CANFD_CHANNEL_INDEX}  ·  1 / 5 Mbit/s")
         ui.localEndpoint.setText(f"本机  {UDP_LOCAL_IP}:{UDP_LOCAL_PORT}")
@@ -53,6 +61,14 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.anglesTable.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self.timer = QtCore.QTimer(self, interval=UI_REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
+        self.timer.start()
+        self.send_timer = QtCore.QTimer(self, interval=UDP_SEND_PERIOD_MS)
+        self.send_timer.setTimerType(QtCore.Qt.PreciseTimer)
+        self.send_timer.timeout.connect(self.publish_master)
+        ui.publishMaster.toggled.connect(self.toggle_publish)
+        ui.udpButton.clicked.connect(self.toggle_udp)
+        ui.syncButton.clicked.connect(lambda: self.command("sync", (self.udp,)))
+        ui.followButton.clicked.connect(self.toggle_follow)
         ui.openButton.clicked.connect(self.toggle_device)
         ui.readAllButton.clicked.connect(lambda: self.command("read"))
         ui.trackPose.clicked.connect(lambda on: self.command("pose_on" if on else "pose_off"))
@@ -87,6 +103,96 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.close_device()
 
+    def toggle_udp(self):
+        if self.udp:
+            self.close_udp()
+            return
+        try:
+            self.udp = UdpClass((UDP_LOCAL_IP, UDP_LOCAL_PORT),
+                                (UDP_REMOTE_IP, self.ui.remotePort.value()), UDP_TIMEOUT_S)
+        except OSError as error:
+            self.ui.udpStatus.setText(f"打开 UDP 失败：{error}")
+            return
+        self.udp.start()
+        self.ui.remotePort.setEnabled(False)
+        self.ui.udpButton.setText("关闭 UDP")
+        self.refresh()
+
+    def close_udp(self):
+        self.ui.publishMaster.setChecked(False)
+        self.udp.close()
+        self.udp = None
+        self.displayed_frame = None
+        self.set_slave_angles(None)
+        self.ui.udpButton.setText("打开 UDP")
+        self.ui.remotePort.setEnabled(True)
+        self.ui.udpStatus.setText("UDP 未打开")
+        self.refresh_udp()
+
+    def toggle_publish(self, checked):
+        if checked:
+            self.send_timer.start()
+        else:
+            self.send_timer.stop()
+
+    @staticmethod
+    def master_ready(state):
+        return bool(state and state.opened and not state.faulted and not state.uncertain
+                    and state.coherent and monotonic() - state.feedback_at <= QUERY_TIMEOUT_S
+                    and all(fb and fb.status in (0, 1) for _, fb in state.motors))
+
+    def publish_master(self):
+        state = self.worker.state if self.worker else None
+        if not (self.ui.publishMaster.isChecked() and self.udp and self.master_ready(state)):
+            self.ui.publishMaster.setChecked(False)
+            return
+        joints = [fb for _, fb in state.motors[:6]]
+        q = Robot_UR.motor2dh([fb.position for fb in joints])
+        dq = [fb.velocity / ratio for fb, ratio in zip(joints, Robot_UR.ratio)]
+        try:
+            self.udp.send(encode_master(q, dq, state.motors[6][1].position))
+        except OSError as error:
+            self.close_udp()
+            self.ui.udpStatus.setText(f"UDP 发送失败：{error}")
+
+    def toggle_follow(self):
+        if self.worker.state.remote_action:
+            self.command("remote_off")
+        else:
+            self.command("follow", (self.udp,))
+
+    def refresh_udp(self):
+        link = self.udp
+        state = self.worker.state if self.worker else None
+        publish_ready = bool(link and self.master_ready(state))
+        self.ui.publishMaster.setEnabled(publish_ready)
+        if not publish_ready:
+            self.ui.publishMaster.setChecked(False)
+        frame = link.fresh() if link else None
+        if frame is not self.displayed_frame:
+            self.set_slave_angles(frame.q if frame else None)
+            self.displayed_frame = frame
+        if link:
+            last = link.latest
+            status = "等待有效从端帧"
+            if last:
+                stamp = datetime.fromtimestamp(last.wall_time).strftime("%H:%M:%S.%f")[:-3]
+                grip = ", ".join(f"{v:.3f}" for v in last.grip)
+                status = (f"{link.peer[0]}:{link.peer[1]}  末帧 {stamp}  "
+                          f"{'在线' if frame else '断流'}  mode {last.mode}  grip [{grip}]")
+            self.ui.udpStatus.setText(f"{status}  RX {link.rx}  TX {link.tx}  丢弃 {link.rejected}")
+            if link.error:
+                self.close_udp()
+                self.ui.udpStatus.setText(f"UDP 接收失败：{link.error}")
+                return
+        active = bool(state and state.remote_action)
+        ready = bool(frame and state and state.streaming
+                     and state.coherent and not state.busy and not state.uncertain and not state.faulted
+                     and set(JOINTS) <= state.owned)
+        self.ui.syncButton.setEnabled(ready and not active)
+        self.ui.followButton.setEnabled(active or ready)
+        self.ui.followButton.setText("停止遥操作" if active else "持续跟随从端")
+
     def toggle_sending(self):
         self.command("stop" if self.worker.state.streaming else "start")
 
@@ -119,6 +225,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker = CanWorker(
             bus, self.ui.listenOnly.isChecked(), period=CAN_PERIOD_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
             pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
+            tool_update_cycles=TOOL_UPDATE_CYCLES,
             controller=ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES),
         )
         self.ui.frameLog.clear()
@@ -127,6 +234,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh()
 
     def refresh(self):
+        self.refresh_udp()
         worker = self.worker
         if worker is None:
             return
@@ -150,7 +258,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.trackPose.setChecked(state.tracking)
         idle = idle and not state.tracking
         ui.openButton.setText("关闭设备" if alive else "打开设备")
-        ui.openButton.setEnabled(not alive or state.opened)
+        ui.openButton.setEnabled(not alive or (state.opened and worker.can_close()))
         ui.listenOnly.setEnabled(not alive)
         ui.readAllButton.setEnabled(idle)
         ui.enableButton.setEnabled(idle and state.coherent and state.verified == set(ALL))
@@ -178,7 +286,7 @@ class MainWindow(QtWidgets.QMainWindow):
             button.setText(f"J{node} 释放" if mode == "PV" and node in state.owned else f"J{node} 锁定")
             unit = "rad" if mode == "PV" else "N·m"
             self.ui.anglesTable.item(node - 1, 5).setText("—" if value is None else f"{value:.3f} {unit}")
-        if state.uncertain:
+        if alive and state.uncertain:
             ui.deviceStatus.setText("失能未确认")
         elif state.faulted:
             ui.deviceStatus.setText("设备通信异常")
@@ -188,7 +296,6 @@ class MainWindow(QtWidgets.QMainWindow):
             ui.deviceStatus.setText("正在打开" if alive else "未连接")
         if not alive:
             worker.join()
-            self.timer.stop()
             self.worker = None
             if self.closing_window:
                 QtCore.QTimer.singleShot(0, self.close)
@@ -236,26 +343,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ui.anglesTable.item(i, 2).setText(value)
 
     def close_device(self):
-        if self.worker is None:
-            return
-        state = self.worker.state
-        if state.uncertain:
-            reply = QtWidgets.QMessageBox.question(
-                self, "失能未确认", "请支撑并物理停机。确认现场已切断动力后释放适配器？",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
-            if reply != QtWidgets.QMessageBox.Yes:
-                self.closing_window = False
-                return
-            self.command("release")
-        else:
-            self.command("close")
+        return self.worker.submit("close")
 
     def closeEvent(self, event):
         if self.worker is not None:
             event.ignore()
-            self.closing_window = True
-            self.close_device()
+            if self.close_device():
+                self.closing_window = True
         else:
+            if self.udp:
+                self.close_udp()
             super().closeEvent(event)
 
 

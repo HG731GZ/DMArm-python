@@ -36,6 +36,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
       <layout class="QHBoxLayout" name="deviceGroupLayout">
        <item>
         <widget class="QPushButton" name="openButton">
+         <property name="toolTip"><string>周期发送期间请先停止发送。关闭设备只释放 CAN FD 适配器。</string></property>
          <property name="text">
           <string>打开设备</string>
          </property>
@@ -1053,7 +1054,8 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
       <property name="title">
        <string>遥操作</string>
       </property>
-      <layout class="QHBoxLayout" name="teleopGroupLayout">
+      <layout class="QVBoxLayout" name="teleopGroupLayout">
+       <item><layout class="QHBoxLayout" name="teleopButtons">
        <item>
         <widget class="QLabel" name="localEndpoint">
          <property name="text">
@@ -1081,17 +1083,24 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
        <item>
         <widget class="QPushButton" name="udpButton">
          <property name="text">
-          <string>连接 UDP</string>
+          <string>打开 UDP</string>
          </property>
          <property name="enabled">
-          <bool>false</bool>
+          <bool>true</bool>
          </property>
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="publishMaster">
+         <property name="text"><string>发布主端命令</string></property>
+         <property name="enabled"><bool>false</bool></property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="syncButton">
+         <property name="toolTip"><string>将主端六轴切到 PV，按当前从端关节角执行一次限速同步。</string></property>
          <property name="text">
-          <string>同步到从端</string>
+          <string>一次同步到从端</string>
          </property>
          <property name="enabled">
           <bool>false</bool>
@@ -1100,8 +1109,9 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
        </item>
        <item>
         <widget class="QPushButton" name="followButton">
+         <property name="toolTip"><string>将主端六轴切到 PV，随新的从端关节角更新限速目标。</string></property>
          <property name="text">
-          <string>跟随从端</string>
+          <string>持续跟随从端</string>
          </property>
          <property name="enabled">
           <bool>false</bool>
@@ -1118,6 +1128,10 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
          </property>
         </widget>
        </item>
+       </layout></item>
+       <item><widget class="QLabel" name="udpStatus">
+        <property name="text"><string>UDP 未打开</string></property>
+       </widget></item>
       </layout>
      </widget>
     </item>
