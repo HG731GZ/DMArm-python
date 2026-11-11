@@ -548,12 +548,12 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
       <item row="0" column="1">
        <widget class="QGroupBox" name="anglesGroup">
         <property name="title">
-         <string>主从关节角</string>
+         <string>主从关节状态</string>
         </property>
         <layout class="QVBoxLayout" name="anglesGroupLayout">
          <item>
           <widget class="QTableWidget" name="anglesTable">
-           <property name="minimumSize"><size><width>445</width><height>227</height></size></property>
+           <property name="minimumSize"><size><width>565</width><height>227</height></size></property>
            <property name="editTriggers">
             <set>QAbstractItemView::NoEditTriggers</set>
            </property>
@@ -590,11 +590,15 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
              <string>从端 (°)</string>
             </property>
            </column>
-           <column><property name="text"><string>速度
+           <column><property name="text"><string>主端速度
 (rad/s)</string></property></column>
            <column><property name="text"><string>重力矩
 (N·m)</string></property></column>
            <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示实际下发的总力矩（N·m）。持位时悬停可查看双环计算和限幅。</string></property></column>
+           <column><property name="text"><string>从端速度
+(rad/s)</string></property><property name="toolTip"><string>从端回传的关节实际速度。</string></property></column>
+           <column><property name="text"><string>从端净力矩
+(N·m)</string></property><property name="toolTip"><string>从端回传的净驱动力矩。该轴回传 NaN 时显示“无效”。</string></property></column>
            <item row="0" column="0">
             <property name="text">
              <string>J1</string>
@@ -757,6 +761,18 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
            <item row="3" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
            <item row="4" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
            <item row="5" column="5"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="0" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="0" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="6"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="7"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
           </widget>
          </item>
         </layout>
@@ -768,6 +784,13 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
          <string>电机设定</string>
         </property>
         <layout class="QGridLayout" name="motorGroupLayout">
+         <item row="1" column="3">
+          <widget class="QPushButton" name="forceFeedbackButton">
+           <property name="enabled"><bool>false</bool></property>
+           <property name="text"><string>开启力反馈</string></property>
+           <property name="toolTip"><string>六轴 MIT 重力补偿期间，将从端关节净驱动力矩逐轴缩小、反向并限幅后叠加到主端。无效轴的反馈分量为零。</string></property>
+          </widget>
+         </item>
          <item row="1" column="4">
           <widget class="QPushButton" name="pidTuneButton">
            <property name="text"><string>单轴调参</string></property>
@@ -777,7 +800,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
           <widget class="QPushButton" name="pidHoldButton">
            <property name="enabled"><bool>false</bool></property>
            <property name="text"><string>开启双环持位</string></property>
-           <property name="toolTip"><string>锁存当前六轴 MIT 反馈位置。退出持位后继续纯重力补偿。</string></property>
+           <property name="toolTip"><string>锁存当前六轴 MIT 反馈位置。退出持位后继续重力补偿及已开启的力反馈。</string></property>
           </widget>
          </item>
          <item row="3" column="0"><widget class="QPushButton" name="clearButton"><property name="text"><string>整臂清错</string></property><property name="enabled"><bool>false</bool></property></widget></item>

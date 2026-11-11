@@ -1,6 +1,6 @@
 """UR 同构主端窗口。选择 dmarm 解释器后直接运行本文件。"""
 
-from math import degrees, pi
+from math import degrees, isnan, pi
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -33,6 +33,7 @@ UDP_TIMEOUT_S = 0.15  # 从端状态新鲜时限，单位 s；运动联调前按
 QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
+POSE_DISPLAY_MS = 50  # 主从姿态图、从端关节表及 UDP 统计的显示间隔，单位 ms
 CAN_CYCLE_DELAY_S = 0  # 本轮 CAN FD 反馈收齐后到下一轮的等待时间，单位 s；0 表示立即继续
 TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
 PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩短 CAN 回包就绪后等待界面线程的时间
@@ -40,6 +41,12 @@ PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩
 # 按 J1～J6 排列。把某一项改为 False，该轴 MIT 前馈力矩即为零，重启主窗生效。
 GRAVITY_AXES = (True, True, True, True, True, True)
 GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率，无单位
+
+# J1～J6 从端净驱动力矩的缩放系数，无量纲；0 表示该轴不输出力反馈。
+FORCE_FEEDBACK_GAIN = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+# J1～J6 主端关节侧反馈分量上限，单位 N·m，填正数，实际范围为 ±上限。
+FORCE_FEEDBACK_LIMIT_NM = (5, 5, 5, 2, 2, 2)
+
 # 双环参数按 J1～J6 排列。J1、J2 沿用 J3 负向 0.5° 阶跃的初调参数，J4、J5 沿用 J6 的初调参数。
 HOLD_POS_KP = (8.0, 8.0, 8.0, 5.5, 5.5, 5.5)  # 位置环比例，单位 1/s
 HOLD_POS_KI = (0.0,) * 6  # 位置环积分，单位 1/s²
@@ -86,6 +93,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker = None
         self.udp = None
         self.displayed_frame = None
+        self.drawn_models = (None, None)
         self.closing_window = False
         ui.channelLabel.setText(f"设备 {CANFD_DEVICE_INDEX}  /  通道 {CANFD_CHANNEL_INDEX}  ·  1 / 5 Mbit/s")
         ui.localEndpoint.setText(f"本机  {UDP_LOCAL_IP}:{UDP_LOCAL_PORT}")
@@ -93,10 +101,14 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.remotePort.setValue(UDP_REMOTE_PORT)
         for table in (ui.feedbackTable, ui.anglesTable):
             table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
-        ui.anglesTable.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        for column in (0, 7):
+            ui.anglesTable.horizontalHeader().setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeToContents)
         self.timer = QtCore.QTimer(self, interval=UI_REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
         self.timer.start()
+        self.display_timer = QtCore.QTimer(self, interval=POSE_DISPLAY_MS)
+        self.display_timer.timeout.connect(self.refresh_pose_display)
+        self.display_timer.start()
         self.send_timer = QtCore.QTimer(self, interval=UDP_SEND_PERIOD_MS)
         self.send_timer.setTimerType(QtCore.Qt.PreciseTimer)
         self.send_timer.timeout.connect(self.publish_master)
@@ -114,6 +126,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.mitButton.clicked.connect(lambda: self.command("mit"))
         ui.pvButton.clicked.connect(lambda: self.command("pv"))
         ui.gravityButton.clicked.connect(self.toggle_gravity)
+        ui.forceFeedbackButton.clicked.connect(self.toggle_force_feedback)
         ui.pidHoldButton.clicked.connect(self.toggle_hold)
         self.tune_limits = TuneLimits(TUNE_STEP_LIMIT_DEG, TUNE_TRAVEL_DEG, TUNE_LOCK_ERROR_DEG)
         self.tune_dialog = PidTuneDialog(self, self.tune_limits, hold_settings(),
@@ -159,17 +172,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.udp.start()
         self.ui.remotePort.setEnabled(False)
         self.ui.udpButton.setText("关闭 UDP")
+        self.refresh_pose_display()
         self.refresh()
 
     def close_udp(self):
         self.ui.publishMaster.setChecked(False)
         self.udp.close()
         self.udp = None
-        self.displayed_frame = None
-        self.set_slave_angles(None)
         self.ui.udpButton.setText("打开 UDP")
         self.ui.remotePort.setEnabled(True)
         self.ui.udpStatus.setText("UDP 未打开")
+        self.refresh_pose_display()
         self.refresh_udp()
 
     def toggle_publish(self, checked):
@@ -204,16 +217,17 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.command("follow", (self.udp,))
 
-    def refresh_udp(self, state=None):
+    def refresh_pose_display(self):
         link = self.udp
-        publish_ready = bool(link and self.master_ready(state))
-        self.ui.publishMaster.setEnabled(publish_ready)
-        if not publish_ready:
-            self.ui.publishMaster.setChecked(False)
         frame = link.fresh() if link else None
         if frame is not self.displayed_frame:
-            self.set_slave_angles(frame.q if frame else None)
+            self.show_slave_frame(frame)
             self.displayed_frame = frame
+        view = self.ui.armView
+        models = (view.master, view.slave)
+        if models != self.drawn_models:
+            view.update()
+            self.drawn_models = models
         if link:
             last = link.latest
             status = "等待有效从端帧"
@@ -223,14 +237,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 status = (f"{link.peer[0]}:{link.peer[1]}  末帧 {stamp}  "
                           f"{'在线' if frame else '断流'}  mode {last.mode}  grip [{grip}]")
             self.ui.udpStatus.setText(f"{status}  RX {link.rx}  TX {link.tx}  丢弃 {link.rejected}")
-            if link.error:
-                self.close_udp()
-                self.ui.udpStatus.setText(f"UDP 接收失败：{link.error}")
-                return
+
+    def refresh_udp(self, state=None):
+        link = self.udp
+        if link and link.error:
+            self.close_udp()
+            self.ui.udpStatus.setText(f"UDP 接收失败：{link.error}")
+            return
+        publish_ready = bool(link and self.master_ready(state))
+        self.ui.publishMaster.setEnabled(publish_ready)
+        if not publish_ready:
+            self.ui.publishMaster.setChecked(False)
         active = bool(state and state.remote_action)
-        ready = bool(frame and state and not state.tune_node and state.streaming and state.hold_state == "空闲"
-                     and state.coherent and not state.busy and not state.uncertain and not state.faulted
-                     and set(JOINTS) <= state.owned)
+        ready = bool(state and link and link.fresh() and not state.tune_node and state.streaming
+                     and state.hold_state == "空闲" and state.coherent and not state.busy
+                     and not state.uncertain and not state.faulted and set(JOINTS) <= state.owned)
         self.ui.syncButton.setEnabled(ready and not active)
         self.ui.followButton.setEnabled(active or ready)
         self.ui.followButton.setText("停止遥操作" if active else "持续跟随从端")
@@ -240,6 +261,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def toggle_gravity(self):
         self.command("gravity_off" if self.worker.state.gravity else "gravity_on")
+
+    def toggle_force_feedback(self):
+        if self.worker.state.force_feedback:
+            self.command("force_off")
+        else:
+            self.command("force_on", (self.udp,))
 
     def toggle_hold(self):
         self.command("hold_off" if self.worker.state.hold_state == "持位" else "hold_on")
@@ -275,7 +302,9 @@ class MainWindow(QtWidgets.QMainWindow):
             bus = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX, CANFD_CHANNEL_INDEX,
                            QUERY_TIMEOUT_S, joint_torque_limits=MOTOR_OUTPUT_TORQUE_LIMIT_NM)
             hold = HoldParameters(**hold_settings())
-            controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold, [bus.motors[n] for n in JOINTS])
+            controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold,
+                                       [bus.motors[n] for n in JOINTS], force_gain=FORCE_FEEDBACK_GAIN,
+                                       force_limit=FORCE_FEEDBACK_LIMIT_NM)
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
             return
@@ -347,6 +376,10 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.pidHoldButton.setText({"空闲": "开启双环持位", "持位": "退出持位", "退出中": "退出中"}[state.hold_state])
         ui.gravityButton.setEnabled(free and six_active)
         ui.gravityButton.setText("关闭重力补偿" if state.gravity else "开启重力补偿")
+        force_frame = self.udp.fresh() if ready and self.udp and state.can_reflect_force else None
+        force_ready = bool(force_frame and force_frame.has_net_torque)
+        ui.forceFeedbackButton.setEnabled(ready and (state.force_feedback or force_ready))
+        ui.forceFeedbackButton.setText("关闭力反馈" if state.force_feedback else "开启力反馈")
         ui.homeButton.setEnabled(free and six_active)
         for button in (ui.toolMitButton, ui.toolPvtButton):
             button.setEnabled(idle and 7 in state.verified)
@@ -385,6 +418,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if axis.target is not None:
             lines.extend((f"锁存角 {axis.target:.4f} rad　位置误差 {axis.error:.4f} rad",
                           f"目标速度 {axis.velocity_ref:.4f} rad/s"))
+        if axis.reflection:
+            lines.append(f"电机侧力反馈 {axis.reflection:+.4f} N·m")
         lines.extend((f"重力前馈 {axis.gravity:.4f} N·m", f"PID 原始 / 限幅后 {axis.pid_raw:.4f} / {axis.pid:.4f} N·m",
                       f"电机有效上限 ±{axis.output_limit:.4f} N·m", "、".join(flags) if flags else "未受限"))
         item.setToolTip("\n".join(lines))
@@ -395,7 +430,6 @@ class MainWindow(QtWidgets.QMainWindow):
         model = Robot_UR.from_feedback(joints) if all(joints) else None
         view = self.ui.armView
         view.master = model
-        view.update()
         table = self.ui.anglesTable
         for i in range(6):
             values = ("—", "—", "—") if model is None else (
@@ -423,14 +457,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 for label, value in zip(self.tool_fields[4:6], (fb.mos, fb.rotor) if fb else (0, 0)):
                     label.setStyleSheet("background-color: #ffc4c4" if value > 60 else "")
 
-    def set_slave_angles(self, q):
-        """接收已解码的从端六关节角（rad）；断开时用 None 清除。"""
-        model = Robot_UR(q) if q is not None else None
+    def show_slave_frame(self, frame):
+        """用同一帧刷新从端姿态、实际速度和净驱动力矩，断流时清除。"""
+        model = Robot_UR(frame.q, frame.dq) if frame else None
         self.ui.armView.slave = model
-        self.ui.armView.update()
+        table = self.ui.anglesTable
         for i in range(6):
-            value = f"{degrees(model.Angle[i]):.2f}" if model is not None else "—"
-            self.ui.anglesTable.item(i, 2).setText(value)
+            angle = speed = torque = "—"
+            if frame:
+                angle = f"{degrees(model.Angle[i]):.2f}"
+                speed = f"{frame.dq[i]:.3f}"
+                torque = "无效" if isnan(frame.net_torque[i]) else f"{frame.net_torque[i]:.3f}"
+            table.item(i, 2).setText(angle)
+            table.item(i, 6).setText(speed)
+            table.item(i, 7).setText(torque)
 
     def close_device(self):
         return self.worker.submit("close")

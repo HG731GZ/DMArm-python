@@ -53,6 +53,7 @@ class HoldAxis(NamedTuple):
     error: float | None
     velocity_ref: float | None
     gravity: float
+    reflection: float
     pid_raw: float
     pid: float
     output_limit: float
@@ -62,11 +63,15 @@ class HoldAxis(NamedTuple):
 
 
 class ArmController:
-    def __init__(self, home, gravity_gain, gravity_axes, hold, motors):
+    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *, force_gain, force_limit):
         self.home = six_values("预设角", home)
         self.gravity_gain = six_values("重力补偿倍率", gravity_gain)
         self.gravity_axes = six_values("重力补偿轴", gravity_axes)
         self.gravity_on = False
+        self.force_gain = six_values("力反馈缩放系数", force_gain)
+        self.force_limit = six_values("关节反馈力矩上限", force_limit)
+        if (self.force_gain < 0).any() or (self.force_gain > 1).any() or (self.force_limit <= 0).any():
+            raise ValueError("力反馈系数须在 0～1 之间，关节反馈力矩上限须为正数")
         self.hold = hold
         self.output_limit = np.array([m.output_limit for m in motors])
         self.motor_speeds = np.array([m.max_velocity for m in motors])
@@ -88,6 +93,12 @@ class ArmController:
     def gravity_commands(self, feedback):
         angles = Robot_UR.motor2dh([f.position for f in feedback])
         return Robot_UR.gravity_at(angles) * self.gravity_gain * self.gravity_axes
+
+    def reflected_torque(self, net_torque):
+        """在关节侧反向、缩放及对称限幅，再按虚功关系换算为电机力矩。"""
+        source = np.array([v if isfinite(v) else 0.0 for v in net_torque])
+        joint = np.clip(-self.force_gain * source, -self.force_limit, self.force_limit)
+        return joint / Robot_UR.ratio
 
     def begin_hold(self, q_hold, feedback, last_torque, axes=slice(0, 6)):
         self.axes = axes
@@ -125,7 +136,7 @@ class ArmController:
         self.previous = None
         self.details = ()
 
-    def step_hold(self, feedback, dt):
+    def step_hold(self, feedback, dt, reflected=None):
         """每个完整样本计算一次，首帧 dt 为零，保持已确认的上一输出。"""
         p = self.hold
         axes = range(6)[self.axes]
@@ -154,7 +165,8 @@ class ArmController:
                 pid = max(-p.pid_limit[i], min(p.pid_limit[i], pid_raw))
 
             limit = self.output_limit[i]
-            request = gravity[i] + pid
+            reflection = reflected[i] if reflected is not None else 0.0
+            request = gravity[i] + pid + reflection
             goal = max(-limit, min(limit, request))
             step = p.torque_rate[i] * dt
             command = max(self.previous[j] - step, min(self.previous[j] + step, goal))
@@ -169,7 +181,7 @@ class ArmController:
                     self.pos_i[j] = max(-p.pos_i_limit[i], min(p.pos_i_limit[i], self.pos_i[j] + dq))
                 if all(dv * gap <= 0 for gap in gaps):
                     self.vel_i[j] = max(-p.vel_i_limit[i], min(p.vel_i_limit[i], self.vel_i[j] + dv))
-            details[i] = HoldAxis(target, error, v_ref, gravity[i], pid_raw, pid, limit,
+            details[i] = HoldAxis(target, error, v_ref, gravity[i], reflection, pid_raw, pid, limit,
                                   pid_raw != pid, abs(request) >= limit, goal != command)
         self.previous = commands
         self.details = tuple(details)

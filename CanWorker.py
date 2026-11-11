@@ -62,6 +62,7 @@ class Snapshot:
     uncertain: frozenset
     streaming: bool
     gravity: bool
+    force_feedback: bool
     hold_state: str
     hold_details: tuple
     joint_sample_at: float
@@ -85,6 +86,12 @@ class Snapshot:
     tune_parameters: tuple
     tune_revision: int
 
+    @property
+    def can_reflect_force(self):
+        return (self.opened and self.streaming and self.gravity and self.coherent
+                and not self.uncertain and not self.faulted and not self.tune_node
+                and all(n in self.owned and mode == "MIT" for n, (mode, _) in zip(JOINTS, self.motors)))
+
 
 class CanWorker(Thread):
     def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
@@ -106,6 +113,8 @@ class CanWorker(Thread):
         self.remote_link = None
         self.remote_action = ""
         self.remote_frame = None
+        self.clear_force_feedback()
+        self.force_output_pending = False
         self.commands = {}
         self.joint_sample = None
         self.last_hold_sample_at = None
@@ -148,6 +157,7 @@ class CanWorker(Thread):
                 self.bus.started, bool(self.current or self.pending), self.first_read,
                 frozenset(self.verified), frozenset(self.owned), frozenset(self.uncertain),
                 self.streaming, bool(self.controller and self.controller.gravity_on),
+                self.force_link is not None,
                 self.controller.hold_state if self.controller else "空闲",
                 self.controller.details if self.controller else (),
                 self.joint_sample.oldest_at if self.joint_sample else 0.0,
@@ -231,6 +241,7 @@ class CanWorker(Thread):
     def disable(self, nodes):
         """即使某轴失联，也给其余目标逐台发失能。仅状态回读 0 才销账。"""
         self.streaming = False
+        self.clear_force_feedback()
         self.invalidate_sample()
         self.targets.clear()
         self.clear_remote()
@@ -271,6 +282,7 @@ class CanWorker(Thread):
         if self.uncertain:
             self.report(f"失能未确认 {sorted(self.uncertain)}；请支撑并物理停机")
             return False
+        self.force_output_pending = False
         if clearing_error:
             self.report(f"失能已回读；清发送队列失败：{clearing_error}")
             self.faulted = True
@@ -314,6 +326,7 @@ class CanWorker(Thread):
         return replies
 
     def write_modes(self, value, nodes):
+        self.clear_force_feedback()
         self.invalidate_sample()
         # 寄存器写入与回读是额外批次；分频发送的夹钳只在到期的控制轮中加入。
         continuing = {n: target for n, target in self.targets.items()
@@ -589,7 +602,7 @@ class CanWorker(Thread):
             dt = sample.sampled_at - self.last_hold_sample_at
             if not 0 < dt <= ctl.hold.max_dt:
                 raise ZlgError(f"持位采样间隔异常：{dt * 1000:.2f} ms")
-        commands, goals = ctl.step_hold(sample.feedback, dt)
+        commands, goals = ctl.step_hold(sample.feedback, dt, self.force_torque)
         self.last_hold_sample_at = sample.sampled_at
         matched = True
         for n, torque, goal in zip(JOINTS[ctl.axes], commands, goals):
@@ -618,6 +631,8 @@ class CanWorker(Thread):
         motors = self.bus.motors
         if self.remote_action:
             self.update_remote()
+        if self.force_link is not None:
+            self.update_force_feedback()
         holding = ctl and ctl.hold_state != "空闲"
         released = False
         if holding:
@@ -625,6 +640,8 @@ class CanWorker(Thread):
         elif ctl and ctl.gravity_on and not self.tune_node and any(motors[n].mode == 1 for n in JOINTS):
             feedback = tuple(motors[n].feedback for n in JOINTS)
             torques = ctl.gravity_commands(feedback)
+            if self.force_torque is not None:
+                torques += self.force_torque
             for node in JOINTS:
                 motor = motors[node]
                 if motor.mode == 1:
@@ -637,11 +654,15 @@ class CanWorker(Thread):
             frames = [self.targets[n] for n in expected]
             check = self.hold_checkpoint if holding else self.checkpoint
             sent_at = perf_counter()
+            # 收齐无反馈分量的新指令应答前，停发仍需撤去可能已经下发的反馈力矩。
+            if self.force_torque is not None:
+                self.force_output_pending = True
             self.bus.exchange(frames, expected, check, queued=self.queued_cycles)
             if holding:
                 exchanged_at = perf_counter()
                 check()
             self.confirm_batch(expected)
+            self.force_output_pending = self.force_torque is not None
             if holding:
                 has_tool = 7 in expected
                 if has_tool not in self.reported_batches:
@@ -664,7 +685,7 @@ class CanWorker(Thread):
                     self.command_peaks[i] = max(self.command_peaks[i], abs(self.last_torque[i + 1]))
                 if released:
                     self.finish_hold()
-                    self.report("已退出持位，纯重力补偿开启")
+                    self.report("已退出持位，继续重力补偿" + ("及力反馈" if self.force_link else ""))
             if self.tune_node:
                 self.advance_tuning(sent_at, holding)
         self.cycles += 1
@@ -685,6 +706,9 @@ class CanWorker(Thread):
                 raise ZlgError(f"ID {node} 反馈退出使能：{fb.status_text}")
 
     def stop(self):
+        self.clear_force_feedback()
+        if self.force_output_pending and self.controller.hold_state == "空闲":
+            self.cycle()
         if self.remote_action:
             self.hold_remote("停止发送")
             self.cycle()
@@ -695,6 +719,7 @@ class CanWorker(Thread):
                     self.clear_motor_command(node)
             self.bus.exchange([self.targets[n] for n in JOINTS], self.joint_feedback, self.checkpoint)
             self.confirm_batch(self.joint_feedback)
+            self.force_output_pending = False
             self.finish_hold()
             self.clear_tuning()
             self.controller.gravity_on = False
@@ -706,6 +731,7 @@ class CanWorker(Thread):
         """在使能状态下交接，PV 锁存原始电机角，MIT 首帧沿用当前补偿。"""
         if not nodes:
             return
+        self.clear_force_feedback()
         if self.streaming:
             self.cycle()
         else:
@@ -747,6 +773,7 @@ class CanWorker(Thread):
         if action in ("gravity_on", "gravity_off"):
             ctl.gravity_on = action == "gravity_on"
             if not ctl.gravity_on:
+                self.clear_force_feedback()
                 for n in JOINTS:
                     if motors[n].mode == 1:
                         self.clear_motor_command(n)
@@ -769,6 +796,30 @@ class CanWorker(Thread):
     def clear_remote(self):
         self.remote_link = self.remote_frame = None
         self.remote_action = ""
+
+    def clear_force_feedback(self):
+        self.force_link = self.force_frame = self.force_torque = None
+
+    def start_force_feedback(self, link):
+        frame = link.fresh() if link else None
+        if not self.state.can_reflect_force or not frame or not frame.has_net_torque:
+            self.report("力反馈需要六轴 MIT 使能周期、重力补偿及有效的从端净驱动力矩")
+            return
+        self.force_link = link
+        self.force_frame = frame
+        self.force_torque = self.controller.reflected_torque(frame.net_torque)
+        self.report("力反馈已开启")
+
+    def update_force_feedback(self):
+        frame = self.force_link.fresh()
+        if frame is self.force_frame:
+            return
+        if not frame or frame.generation != self.force_frame.generation or not frame.has_net_torque:
+            self.clear_force_feedback()
+            self.report("从端断流或净驱动力矩全部无效，力反馈已关闭")
+            return
+        self.force_frame = frame
+        self.force_torque = self.controller.reflected_torque(frame.net_torque)
 
     def hold_remote(self, reason):
         self.clear_remote()
@@ -843,10 +894,18 @@ class CanWorker(Thread):
             self.targets.clear()
             self.commands.clear()
             self.clear_remote()
+            self.clear_force_feedback()
             if self.controller:
                 self.controller.gravity_on = False
             self.done = True
             self.report("CAN FD 设备已释放")
+            return
+        if action == "force_on":
+            self.start_force_feedback(nodes[0])
+            return
+        if action == "force_off":
+            self.clear_force_feedback()
+            self.report("力反馈已关闭")
             return
         if action == "hold_on":
             if self.controller.hold_state == "空闲":
@@ -857,7 +916,7 @@ class CanWorker(Thread):
         if action == "hold_off":
             if self.controller.hold_state == "持位":
                 self.controller.begin_release()
-                self.report("正在退出持位，向纯重力补偿过渡")
+                self.report("正在退出持位，向重力补偿" + ("及力反馈" if self.force_link else "") + "过渡")
             return
         if (self.controller and self.controller.hold_state != "空闲" and
                 action in ("gravity_on", "gravity_off", "mit", "pv", "lock", "unlock", "home", "sync", "follow")):
