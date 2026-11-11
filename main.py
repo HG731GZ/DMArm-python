@@ -12,7 +12,8 @@ from ArmController import ArmController, HoldParameters
 from Robot_UR import Robot_UR
 from ui_Form1 import Ui_Form1
 from ui_ZeroDialog import Ui_ZeroDialog
-from CanWorker import ALL, JOINTS, CanWorker
+from CanWorker import ALL, JOINTS, CanWorker, TuneLimits
+from PidTuneDialog import PidTuneDialog
 from DMMotor import LIMITS, MOTOR_MODELS
 from USBCANFD import USBCANFD
 from UdpClass import UdpClass, encode_master
@@ -59,6 +60,22 @@ HOLD_MAX_DT_S = 0.05  # 完整六轴反馈时限，单位 s；联调时按含夹
 UR_HOME_RAD = (-pi/2, -pi/2, -pi/2, -pi/2, pi/2, 0)  # DH 预设关节角，单位 rad
 PV_SPEED_LIMIT_RAD_S = 0.5  # PV 位置指令的速度上限，单位 rad/s
 
+# 按 J1～J6 的原始电机坐标配置。绝对目标区间取各型号现用位置量程，单位 °。
+TUNE_STEP_LIMIT_DEG = (30.0,) * 6  # 距本次原位的最大阶跃幅度，单位 °
+TUNE_TRAVEL_DEG = tuple((-degrees(LIMITS[m][0]), degrees(LIMITS[m][0])) for m in MOTOR_MODELS[:6])
+TUNE_LOCK_ERROR_DEG = 0.5  # 其余五轴 PV 就位及运行偏差容差，单位 °
+TUNE_SETTLE_BAND_DEG = 0.1  # 回稳绝对位置误差带，单位 °
+TUNE_SETTLE_TIME_S = 0.25  # 误差连续处于回稳带内的最短时间，单位 s
+TUNE_TAIL_TIME_S = 0.5  # 末段平均位置误差的时间窗，单位 s
+
+
+def hold_settings():
+    return dict(pos_kp=HOLD_POS_KP, pos_ki=HOLD_POS_KI, pos_kd=HOLD_POS_KD,
+                vel_kp=HOLD_VEL_KP, vel_ki=HOLD_VEL_KI, vel_kd=HOLD_VEL_KD,
+                pid_limit=HOLD_PID_TORQUE_LIMIT_NM, speed_limit=HOLD_SPEED_LIMIT_RAD_S,
+                torque_rate=HOLD_TORQUE_RATE_NM_S, pos_i_limit=HOLD_POS_I_LIMIT_RAD_S,
+                vel_i_limit=HOLD_VEL_I_LIMIT_NM, filter_s=HOLD_D_FILTER_S, max_dt=HOLD_MAX_DT_S)
+
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -98,6 +115,13 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.pvButton.clicked.connect(lambda: self.command("pv"))
         ui.gravityButton.clicked.connect(self.toggle_gravity)
         ui.pidHoldButton.clicked.connect(self.toggle_hold)
+        self.tune_limits = TuneLimits(TUNE_STEP_LIMIT_DEG, TUNE_TRAVEL_DEG, TUNE_LOCK_ERROR_DEG)
+        self.tune_dialog = PidTuneDialog(self, self.tune_limits, hold_settings(),
+                                         TUNE_SETTLE_BAND_DEG, TUNE_SETTLE_TIME_S, TUNE_TAIL_TIME_S,
+                                         tuple(g * on for g, on in zip(GRAVITY_GAIN, GRAVITY_AXES)),
+                                         tuple(min(t, LIMITS[m][2]) for t, m in
+                                               zip(MOTOR_OUTPUT_TORQUE_LIMIT_NM, MOTOR_MODELS)))
+        ui.pidTuneButton.clicked.connect(self.open_tuning)
         ui.homeButton.clicked.connect(lambda: self.command("home"))
         ui.toolMitButton.clicked.connect(lambda: self.command("tool_mit"))
         ui.toolPvtButton.clicked.connect(lambda: self.command("tool_pvt"))
@@ -180,9 +204,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.command("follow", (self.udp,))
 
-    def refresh_udp(self):
+    def refresh_udp(self, state=None):
         link = self.udp
-        state = self.worker.state if self.worker else None
         publish_ready = bool(link and self.master_ready(state))
         self.ui.publishMaster.setEnabled(publish_ready)
         if not publish_ready:
@@ -205,7 +228,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.ui.udpStatus.setText(f"UDP 接收失败：{link.error}")
                 return
         active = bool(state and state.remote_action)
-        ready = bool(frame and state and state.streaming and state.hold_state == "空闲"
+        ready = bool(frame and state and not state.tune_node and state.streaming and state.hold_state == "空闲"
                      and state.coherent and not state.busy and not state.uncertain and not state.faulted
                      and set(JOINTS) <= state.owned)
         self.ui.syncButton.setEnabled(ready and not active)
@@ -220,6 +243,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def toggle_hold(self):
         self.command("hold_off" if self.worker.state.hold_state == "持位" else "hold_on")
+
+    def open_tuning(self):
+        self.tune_dialog.show()
+        self.refresh()
+        self.tune_dialog.raise_()
+        self.tune_dialog.activateWindow()
 
     def toggle_lock(self, node):
         mode, _ = self.worker.state.motors[node - 1]
@@ -245,11 +274,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             bus = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX, CANFD_CHANNEL_INDEX,
                            QUERY_TIMEOUT_S, joint_torque_limits=MOTOR_OUTPUT_TORQUE_LIMIT_NM)
-            hold = HoldParameters(pos_kp=HOLD_POS_KP, pos_ki=HOLD_POS_KI, pos_kd=HOLD_POS_KD,
-                                  vel_kp=HOLD_VEL_KP, vel_ki=HOLD_VEL_KI, vel_kd=HOLD_VEL_KD,
-                                  pid_limit=HOLD_PID_TORQUE_LIMIT_NM, speed_limit=HOLD_SPEED_LIMIT_RAD_S,
-                                  torque_rate=HOLD_TORQUE_RATE_NM_S, pos_i_limit=HOLD_POS_I_LIMIT_RAD_S,
-                                  vel_i_limit=HOLD_VEL_I_LIMIT_NM, filter_s=HOLD_D_FILTER_S, max_dt=HOLD_MAX_DT_S)
+            hold = HoldParameters(**hold_settings())
             controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold, [bus.motors[n] for n in JOINTS])
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
@@ -259,6 +284,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
             tool_update_cycles=TOOL_UPDATE_CYCLES,
             controller=controller,
+            tune_limits=self.tune_limits,
         )
         self.ui.frameLog.clear()
         self.worker.start()
@@ -266,11 +292,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh()
 
     def refresh(self):
-        self.refresh_udp()
         worker = self.worker
         if worker is None:
+            self.refresh_udp()
+            self.tune_dialog.refresh(None, (), False)
             return
-        state, messages = worker.snapshot()
+        state, messages, points = worker.snapshot()
+        self.refresh_udp(state)
         if messages:
             self.ui.frameLog.appendPlainText("\n".join(messages))
         feedback = state.motors if state.opened and not state.faulted else (("—", None),) * len(ALL)
@@ -299,11 +327,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.sendButton.setText("停止发送" if state.streaming else "开始发送")
         ui.sendButton.setEnabled((control and state.streaming) or (ready and state.owned == set(ALL)))
         powered = ready and state.coherent and state.owned == set(ALL)
-        free = state.hold_state == "空闲"
+        free = state.hold_state == "空闲" and not state.tune_node
         for btn in (ui.mitButton, ui.pvButton):
             btn.setEnabled(free and ((idle and set(JOINTS) <= state.verified) or powered))
         can_zero = ready and state.coherent and state.first_read and not (state.streaming or state.tracking)
-        ui.zeroButton.setEnabled(can_zero)
+        ui.zeroButton.setEnabled(can_zero and not state.tune_node)
         if self.zero_dialog.isVisible() and not can_zero:
             self.zero_dialog.reject()
         active = ready and state.streaming and state.coherent
@@ -311,7 +339,11 @@ class MainWindow(QtWidgets.QMainWindow):
         modes = [mode for mode, _ in state.motors[:6]]
         hold_ready = (six_active and not state.remote_action and all(m == "MIT" for m in modes)
                       and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= HOLD_MAX_DT_S)
-        ui.pidHoldButton.setEnabled((free and hold_ready) or (ready and state.hold_state == "持位"))
+        tune_ready = (six_active and free and worker.queued_cycles and not state.remote_action
+                      and all(m in ("MIT", "PV") for m in modes)
+                      and perf_counter() - state.joint_sample_at <= HOLD_MAX_DT_S)
+        self.tune_dialog.refresh(state, points, tune_ready)
+        ui.pidHoldButton.setEnabled(not state.tune_node and ((free and hold_ready) or (ready and state.hold_state == "持位")))
         ui.pidHoldButton.setText({"空闲": "开启双环持位", "持位": "退出持位", "退出中": "退出中"}[state.hold_state])
         ui.gravityButton.setEnabled(free and six_active)
         ui.gravityButton.setText("关闭重力补偿" if state.gravity else "开启重力补偿")

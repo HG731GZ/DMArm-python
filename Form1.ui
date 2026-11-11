@@ -768,6 +768,11 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
          <string>电机设定</string>
         </property>
         <layout class="QGridLayout" name="motorGroupLayout">
+         <item row="1" column="4">
+          <widget class="QPushButton" name="pidTuneButton">
+           <property name="text"><string>单轴调参</string></property>
+          </widget>
+         </item>
          <item row="1" column="5">
           <widget class="QPushButton" name="pidHoldButton">
            <property name="enabled"><bool>false</bool></property>

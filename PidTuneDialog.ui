@@ -1,0 +1,421 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>PidTuneDialog</class>
+ <widget class="QDialog" name="PidTuneDialog">
+  <property name="windowTitle">
+   <string>单轴 PID 调参</string>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>755</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="dialogLayout" stretch="0,0,0,0,0,1,0,0">
+   <item>
+    <layout class="QHBoxLayout" name="controlLayout" stretch="0,0,0,0,1">
+     <item>
+      <widget class="QLabel" name="axisLabel">
+       <property name="text">
+        <string>调参轴</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="axisBox">
+       <item>
+        <property name="text">
+         <string>J1</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>J2</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>J3</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>J4</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>J5</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>J6</string>
+        </property>
+       </item>
+       <property name="currentIndex">
+        <number>2</number>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="startButton">
+       <property name="text">
+        <string>开始本轴调参</string>
+       </property>
+       <property name="autoDefault">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="endButton">
+       <property name="text">
+        <string>结束并锁回 PV</string>
+       </property>
+       <property name="autoDefault">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="phaseLabel">
+       <property name="text">
+        <string>空闲</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="lockTable">
+     <property name="minimumHeight">
+      <number>136</number>
+     </property>
+     <property name="maximumHeight">
+      <number>136</number>
+     </property>
+     <property name="editTriggers">
+      <set>QAbstractItemView::NoEditTriggers</set>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::NoSelection</enum>
+     </property>
+     <property name="focusPolicy">
+      <enum>Qt::NoFocus</enum>
+     </property>
+     <attribute name="verticalHeaderDefaultSectionSize">
+      <number>24</number>
+     </attribute>
+     <row>
+      <property name="text">
+       <string>模式</string>
+      </property>
+     </row>
+     <row>
+      <property name="text">
+       <string>锁存角 (°)</string>
+      </property>
+     </row>
+     <row>
+      <property name="text">
+       <string>实测角 (°)</string>
+      </property>
+     </row>
+     <row>
+      <property name="text">
+       <string>锁定误差 (°)</string>
+      </property>
+     </row>
+     <column>
+      <property name="text">
+       <string>J1</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>J2</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>J3</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>J4</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>J5</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>J6</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="positionLabel">
+     <property name="text">
+      <string>原位 — °　　实测 — °　　当前目标 — °</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="stepLayout">
+     <item>
+      <widget class="QLabel" name="stepLabel">
+       <property name="text">
+        <string>阶跃幅值 (°)</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDoubleSpinBox" name="stepBox">
+       <property name="decimals">
+        <number>3</number>
+       </property>
+       <property name="minimum">
+        <double>-30</double>
+       </property>
+       <property name="maximum">
+        <double>30</double>
+       </property>
+       <property name="singleStep">
+        <double>0.1</double>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="stepButton">
+       <property name="text">
+        <string>施加位置阶跃</string>
+       </property>
+       <property name="autoDefault">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="originButton">
+       <property name="text">
+        <string>保持原位 / 回原位</string>
+       </property>
+       <property name="autoDefault">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="parameterGroup">
+     <property name="title">
+      <string>双环参数</string>
+     </property>
+     <layout class="QGridLayout" name="parameterLayout">
+      <item row="0" column="0" colspan="1">
+       <widget class="QLabel" name="pos_kpLabel">
+        <property name="text">
+         <string>位置 Kp (1/s)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0" colspan="1">
+       <widget class="QLineEdit" name="pos_kp" />
+      </item>
+      <item row="0" column="1" colspan="1">
+       <widget class="QLabel" name="pos_kiLabel">
+        <property name="text">
+         <string>位置 Ki (1/s²)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1" colspan="1">
+       <widget class="QLineEdit" name="pos_ki" />
+      </item>
+      <item row="0" column="2" colspan="1">
+       <widget class="QLabel" name="pos_kdLabel">
+        <property name="text">
+         <string>位置 Kd</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2" colspan="1">
+       <widget class="QLineEdit" name="pos_kd" />
+      </item>
+      <item row="0" column="3" colspan="1">
+       <widget class="QLabel" name="pos_i_limitLabel">
+        <property name="text">
+         <string>积分上限 (rad/s)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="3" colspan="1">
+       <widget class="QLineEdit" name="pos_i_limit" />
+      </item>
+      <item row="0" column="4" colspan="1">
+       <widget class="QLabel" name="speed_limitLabel">
+        <property name="text">
+         <string>速度上限 (rad/s)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="4" colspan="1">
+       <widget class="QLineEdit" name="speed_limit" />
+      </item>
+      <item row="2" column="0" colspan="1">
+       <widget class="QLabel" name="vel_kpLabel">
+        <property name="text">
+         <string>速度 Kp (N·m·s/rad)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0" colspan="1">
+       <widget class="QLineEdit" name="vel_kp" />
+      </item>
+      <item row="2" column="1" colspan="1">
+       <widget class="QLabel" name="vel_kiLabel">
+        <property name="text">
+         <string>速度 Ki (N·m/rad)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1" colspan="1">
+       <widget class="QLineEdit" name="vel_ki" />
+      </item>
+      <item row="2" column="2" colspan="1">
+       <widget class="QLabel" name="vel_kdLabel">
+        <property name="text">
+         <string>速度 Kd (N·m·s²/rad)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="2" colspan="1">
+       <widget class="QLineEdit" name="vel_kd" />
+      </item>
+      <item row="2" column="3" colspan="1">
+       <widget class="QLabel" name="vel_i_limitLabel">
+        <property name="text">
+         <string>积分上限 (N·m)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="3" colspan="1">
+       <widget class="QLineEdit" name="vel_i_limit" />
+      </item>
+      <item row="2" column="4" colspan="1">
+       <widget class="QLabel" name="pid_limitLabel">
+        <property name="text">
+         <string>PID 限矩 (N·m)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="4" colspan="1">
+       <widget class="QLineEdit" name="pid_limit" />
+      </item>
+      <item row="4" column="0" colspan="1">
+       <widget class="QLabel" name="torque_rateLabel">
+        <property name="text">
+         <string>总力矩变化率 (N·m/s)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="0" colspan="1">
+       <widget class="QLineEdit" name="torque_rate" />
+      </item>
+      <item row="4" column="1" colspan="4">
+       <widget class="QLabel" name="limitsLabel">
+        <property name="text">
+         <string />
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1" colspan="1">
+       <widget class="QLabel" name="draftLabel">
+        <property name="text">
+         <string />
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="2" colspan="1">
+       <widget class="QPushButton" name="applyButton">
+        <property name="text">
+         <string>应用本轴参数</string>
+        </property>
+        <property name="autoDefault">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="3" colspan="2">
+       <widget class="QPushButton" name="copyButton">
+        <property name="text">
+         <string>复制已应用参数</string>
+        </property>
+        <property name="autoDefault">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="TunePlotView" name="plotArea">
+     <property name="minimumSize">
+      <size>
+       <width>650</width>
+       <height>218</height>
+      </size>
+     </property>
+     <property name="positionLegend" stdset="0">
+      <string>位置 (°)|目标角|实测角</string>
+     </property>
+     <property name="velocityLegend" stdset="0">
+      <string>速度 (rad/s)|目标速度|实测速度</string>
+     </property>
+     <property name="torqueLegend" stdset="0">
+      <string>力矩 (N·m)|重力前馈|PID 纠偏|下发总力矩|反馈力矩</string>
+     </property>
+     <property name="limitLegend" stdset="0">
+      <string>PID 限幅|总限矩|变化率</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="metricLabel">
+     <property name="text">
+      <string>等待采样</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="messageLabel">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+     <property name="text">
+      <string>设备未连接</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>TunePlotView</class>
+   <extends>QWidget</extends>
+   <header>PidTunePlotView</header>
+  </customwidget>
+ </customwidgets>
+ <resources />
+ <connections />
+</ui>

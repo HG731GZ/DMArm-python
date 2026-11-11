@@ -1,4 +1,4 @@
-"""用当前解释器的 pyuic5 生成主窗和零位设定界面。"""
+"""用当前解释器的 pyuic5 生成项目的 Qt 界面。"""
 
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ import sys
 
 def generate():
     directory = Path(__file__).resolve().parent
-    for name in ("Form1", "ZeroDialog"):
+    for name in ("Form1", "ZeroDialog", "PidTuneDialog"):
         source = subprocess.check_output(
             [sys.executable, "-m", "PyQt5.uic.pyuic", f"{name}.ui"],
             cwd=directory, encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"},

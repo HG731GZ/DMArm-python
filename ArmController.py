@@ -1,12 +1,16 @@
 """UR 本地 MIT 重力补偿、双环持位和 PV 预设位目标换算。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from typing import NamedTuple
 
 import numpy as np
 
 from Robot_UR import Robot_UR
+
+
+HOLD_FIELDS = ("pos_kp", "pos_ki", "pos_kd", "vel_kp", "vel_ki", "vel_kd", "pid_limit",
+               "speed_limit", "torque_rate", "pos_i_limit", "vel_i_limit")
 
 
 def six_values(name, values):
@@ -33,8 +37,7 @@ class HoldParameters:
     max_dt: float
 
     def __post_init__(self):
-        for name in ("pos_kp", "pos_ki", "pos_kd", "vel_kp", "vel_ki", "vel_kd", "pid_limit",
-                     "speed_limit", "torque_rate", "pos_i_limit", "vel_i_limit"):
+        for name in HOLD_FIELDS:
             values = six_values(name, getattr(self, name))
             if (values < 0).any():
                 raise ValueError(f"{name} 各项须为非负数")
@@ -66,7 +69,8 @@ class ArmController:
         self.gravity_on = False
         self.hold = hold
         self.output_limit = np.array([m.output_limit for m in motors])
-        self.speed_limit = np.minimum(hold.speed_limit, [m.max_velocity for m in motors])
+        self.motor_speeds = np.array([m.max_velocity for m in motors])
+        self.speed_limit = np.minimum(hold.speed_limit, self.motor_speeds)
         self.end_hold()
 
     def motor_home(self, motors):
@@ -85,15 +89,30 @@ class ArmController:
         angles = Robot_UR.motor2dh([f.position for f in feedback])
         return Robot_UR.gravity_at(angles) * self.gravity_gain * self.gravity_axes
 
-    def begin_hold(self, q_hold, feedback, last_torque):
+    def begin_hold(self, q_hold, feedback, last_torque, axes=slice(0, 6)):
+        self.axes = axes
         self.q_hold = np.array(q_hold)
-        self.last_velocity = np.array([f.velocity for f in feedback])
-        self.acceleration = np.zeros(6)
-        self.pos_i = np.zeros(6)
-        self.vel_i = np.zeros(6)
-        self.previous = np.clip(last_torque, -self.output_limit, self.output_limit)
+        self.last_velocity = np.array([f.velocity for f in feedback[axes]])
+        self.acceleration = np.zeros_like(self.last_velocity)
+        self.pos_i = np.zeros_like(self.last_velocity)
+        self.vel_i = np.zeros_like(self.last_velocity)
+        self.previous = np.clip(last_torque, -self.output_limit[axes], self.output_limit[axes])
         self.hold_state = "持位"
         self.gravity_on = True
+
+    def set_axis_reference(self, target):
+        self.q_hold[0] = target
+
+    def apply_axis_parameters(self, index, values, feedback, last_torque):
+        """整体校验成功后替换参数，保留当前原始电机角目标。"""
+        updated = {}
+        for name in HOLD_FIELDS:
+            column = getattr(self.hold, name).copy()
+            column[index] = values[name]
+            updated[name] = column
+        self.hold = replace(self.hold, **updated)
+        self.speed_limit[index] = min(self.hold.speed_limit[index], self.motor_speeds[index])
+        self.begin_hold(self.q_hold, feedback, [last_torque], self.axes)
 
     def begin_release(self):
         self.hold_state = "退出中"
@@ -109,41 +128,49 @@ class ArmController:
     def step_hold(self, feedback, dt):
         """每个完整样本计算一次，首帧 dt 为零，保持已确认的上一输出。"""
         p = self.hold
+        axes = range(6)[self.axes]
         gravity = self.gravity_commands(feedback)
-        if self.hold_state == "持位":
-            velocity = np.array([f.velocity for f in feedback])
-            if dt > 0:
-                acceleration = (velocity - self.last_velocity) / dt
-                self.acceleration += dt / (p.filter_s + dt) * (acceleration - self.acceleration)
-            self.last_velocity = velocity
-            error = self.q_hold - [f.position for f in feedback]
-            v_raw = p.pos_kp * error + self.pos_i - p.pos_kd * velocity
-            v_ref = np.clip(v_raw, -self.speed_limit, self.speed_limit)
-            v_error = v_ref - velocity
-            pid_raw = p.vel_kp * v_error + self.vel_i - p.vel_kd * self.acceleration
-            pid = np.clip(pid_raw, -p.pid_limit, p.pid_limit)
-        else:
-            pid_raw = pid = np.zeros(6)
+        holding = self.hold_state == "持位"
+        alpha = dt / (p.filter_s + dt)
+        commands = np.empty(len(axes))
+        goals = np.empty(len(axes))
+        details = [None] * 6
+        # 状态按活动轴排列，参数、实测值及诊断按整臂轴号排列。
+        for j, i in enumerate(axes):
+            target = error = v_ref = None
+            pid_raw = pid = 0.0
+            if holding:
+                velocity = feedback[i].velocity
+                if dt > 0:
+                    acceleration = (velocity - self.last_velocity[j]) / dt
+                    self.acceleration[j] += alpha * (acceleration - self.acceleration[j])
+                self.last_velocity[j] = velocity
+                target = self.q_hold[j]
+                error = target - feedback[i].position
+                v_raw = p.pos_kp[i] * error + self.pos_i[j] - p.pos_kd[i] * velocity
+                v_ref = max(-self.speed_limit[i], min(self.speed_limit[i], v_raw))
+                v_error = v_ref - velocity
+                pid_raw = p.vel_kp[i] * v_error + self.vel_i[j] - p.vel_kd[i] * self.acceleration[j]
+                pid = max(-p.pid_limit[i], min(p.pid_limit[i], pid_raw))
 
-        request = gravity + pid
-        goal = np.clip(request, -self.output_limit, self.output_limit)
-        step = p.torque_rate * dt
-        command = np.clip(goal, self.previous - step, self.previous + step)
-        self.previous = command
+            limit = self.output_limit[i]
+            request = gravity[i] + pid
+            goal = max(-limit, min(limit, request))
+            step = p.torque_rate[i] * dt
+            command = max(self.previous[j] - step, min(self.previous[j] + step, goal))
+            commands[j], goals[j] = command, goal
 
-        if self.hold_state == "持位":
-            # 先发本拍输出，再决定下一拍积分。任一内环限幅都可冻结同向的两级积分。
-            inner_gaps = np.array([pid_raw - pid, request - goal, goal - command])
-            dq = p.pos_ki * error * dt
-            dv = p.vel_ki * v_error * dt
-            pos_ok = ((dq * (v_raw - v_ref) <= 0) & (dq * inner_gaps <= 0).all(axis=0))
-            vel_ok = (dv * inner_gaps <= 0).all(axis=0)
-            enabled = p.pid_limit > 0
-            self.pos_i = np.clip(self.pos_i + dq * (pos_ok & enabled), -p.pos_i_limit, p.pos_i_limit)
-            self.vel_i = np.clip(self.vel_i + dv * (vel_ok & enabled), -p.vel_i_limit, p.vel_i_limit)
-            target = self.q_hold
-        else:
-            target = error = v_ref = (None,) * 6
-        self.details = tuple(map(HoldAxis, target, error, v_ref, gravity, pid_raw, pid, self.output_limit,
-                                 pid_raw != pid, abs(request) >= self.output_limit, goal != command))
-        return command, goal
+            if holding and p.pid_limit[i] > 0:
+                # 本拍输出已确定，积分只在不会加剧现有限幅时累加到下一拍。
+                gaps = (pid_raw - pid, request - goal, goal - command)
+                dq = p.pos_ki[i] * error * dt
+                dv = p.vel_ki[i] * v_error * dt
+                if dq * (v_raw - v_ref) <= 0 and all(dq * gap <= 0 for gap in gaps):
+                    self.pos_i[j] = max(-p.pos_i_limit[i], min(p.pos_i_limit[i], self.pos_i[j] + dq))
+                if all(dv * gap <= 0 for gap in gaps):
+                    self.vel_i[j] = max(-p.vel_i_limit[i], min(p.vel_i_limit[i], self.vel_i[j] + dv))
+            details[i] = HoldAxis(target, error, v_ref, gravity[i], pid_raw, pid, limit,
+                                  pid_raw != pid, abs(request) >= limit, goal != command)
+        self.previous = commands
+        self.details = tuple(details)
+        return commands, goals
