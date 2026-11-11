@@ -594,7 +594,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
 (rad/s)</string></property></column>
            <column><property name="text"><string>重力矩
 (N·m)</string></property></column>
-           <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示前馈力矩（N·m）</string></property></column>
+           <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示实际下发的总力矩（N·m）。持位时悬停可查看双环计算和限幅。</string></property></column>
            <item row="0" column="0">
             <property name="text">
              <string>J1</string>
@@ -768,6 +768,13 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
          <string>电机设定</string>
         </property>
         <layout class="QGridLayout" name="motorGroupLayout">
+         <item row="1" column="5">
+          <widget class="QPushButton" name="pidHoldButton">
+           <property name="enabled"><bool>false</bool></property>
+           <property name="text"><string>开启双环持位</string></property>
+           <property name="toolTip"><string>锁存当前六轴 MIT 反馈位置。退出持位后继续纯重力补偿。</string></property>
+          </widget>
+         </item>
          <item row="3" column="0"><widget class="QPushButton" name="clearButton"><property name="text"><string>整臂清错</string></property><property name="enabled"><bool>false</bool></property></widget></item>
          <item row="0" column="0">
           <widget class="QPushButton" name="enableButton">

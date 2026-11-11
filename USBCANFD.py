@@ -12,13 +12,17 @@ class OperationInterrupted(Exception):
 
 
 class USBCANFD:
-    def __init__(self, windows_dir, linux_dir, device_index, channel_index, query_timeout=0.5):
+    def __init__(self, windows_dir, linux_dir, device_index, channel_index, query_timeout=0.5,
+                 *, joint_torque_limits):
         self.connection = (windows_dir, linux_dir, device_index, channel_index)
         self.timeout = query_timeout
         self.resources = ExitStack()
         self.backend = None
         self.started = False
-        self.motors = {i: DMMotor(i, model) for i, model in enumerate(MOTOR_MODELS, 1)}
+        if len(joint_torque_limits) != 6:
+            raise ValueError("电机软件输出力矩上限须按 J1～J6 填写六项")
+        self.motors = {i: DMMotor(i, model, limit) for i, (model, limit) in
+                       enumerate(zip(MOTOR_MODELS, (*joint_torque_limits, None)), 1)}
         self.tx = self.rx = self.failed = 0
 
     def open(self, listen_only=True):

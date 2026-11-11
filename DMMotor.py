@@ -1,8 +1,9 @@
 """达妙电机的只读请求、反馈解码及原 UR 主端的控制载荷编码。"""
 
 from enum import Enum
+from math import ceil, floor, isfinite
 import struct
-from time import monotonic
+from time import perf_counter
 from typing import NamedTuple
 
 PARAM_ID = 0x7FF
@@ -49,9 +50,18 @@ class Feedback(NamedTuple):
 
 
 class DMMotor:
-    def __init__(self, node, model):
+    def __init__(self, node, model, output_limit=None):
         self.node = node
         self.max_position, self.max_velocity, self.max_torque = LIMITS[model]
+        if node == 7 and output_limit is None:
+            output_limit = self.max_torque
+        if output_limit is None or not isfinite(output_limit) or output_limit <= 0:
+            raise ValueError(f"ID {node} 软件输出力矩上限须为正的有限值（N·m）")
+        self.output_limit = min(output_limit, self.max_torque)
+        self.min_torque_code = ceil(self.torque_scale(-self.output_limit))
+        self.max_torque_code = floor(self.torque_scale(self.output_limit))
+        if self.min_torque_code > self.max_torque_code:
+            raise ValueError(f"ID {node} 输出上限内没有可发送的 MIT 力矩码")
         self.mode = None
         self.feedback = None
         self.feedback_at = 0.0
@@ -82,7 +92,8 @@ class DMMotor:
             (torque - 2048) * self.max_torque / 2048,
             data[6], data[7], data[0] >> 4,
         )
-        self.feedback_at = monotonic()
+        # 与 CAN 周期调度共用高分辨率时钟，区分同一系统时钟节拍内的连续回包。
+        self.feedback_at = perf_counter()
         return Read.STATUS
 
     @property
@@ -101,11 +112,29 @@ class DMMotor:
             raise ValueError(f"ID {self.node} 不支持以 {self.mode_text} 模式发送控制指令")
         return self.command_id, data
 
+    def torque_scale(self, torque):
+        return (torque + self.max_torque) * 4095 / (2 * self.max_torque)
+
+    def torque_code(self, torque):
+        code = int(self.torque_scale(torque))
+        # 已发送力矩作为首帧起点时，避免浮点往返把同一力矩降到相邻码。
+        if self.torque_value(code + 1) == torque:
+            code += 1
+        return max(self.min_torque_code, min(self.max_torque_code, code))
+
+    @staticmethod
+    def payload_torque_code(payload):
+        return ((payload[6] & 15) << 8) | payload[7]
+
+    def torque_value(self, code):
+        """按 MIT 指令量程还原实际下发的 12 位力矩字段。"""
+        return (2 * code - 4095) * self.max_torque / 4095
+
     def encode_mit(self, position, velocity, torque, kp, kd):
         """按电机协议量程编码 MIT 目标，返回八字节载荷。"""
         p = int((position + self.max_position) * 65535 / (2 * self.max_position))
         v = int((velocity + self.max_velocity) * 4095 / (2 * self.max_velocity))
-        t = int((torque + self.max_torque) * 4095 / (2 * self.max_torque))
+        t = self.torque_code(torque)
         k = int(kp * 4095 / 500)
         d = int(kd * 4095 / 5)
         return p.to_bytes(2, "big") + ((v << 12) | k).to_bytes(3, "big") + ((d << 12) | t).to_bytes(3, "big")

@@ -1,5 +1,7 @@
 """UR 同构主端的关节换算、正运动学与静态重力矩。"""
 
+from math import cos, sin
+
 import numpy as np
 
 
@@ -19,14 +21,26 @@ class Robot_UR:
         [.431678, 0, .004718, -.001152],
         [.277642, -.000290, .009891, .037114],
     ])
+    # 本节质量一阶矩，加上下游总质量乘以到下一关节的固定偏移，单位 kg·m。
+    _subtree_mass = np.cumsum(mass_com[::-1, 0])[::-1]
+    _link_moments = mass_com[:, :1] * mass_com[:, 1:]
+    _link_moments[:-1] += offsets[1:] * _subtree_mass[1:, None]
+    _link_moments = _link_moments.tolist()
 
     @staticmethod
     def wrap(q):
         return np.pi - np.remainder(np.pi - q, 2 * np.pi)
 
     @classmethod
+    def _wrapped_joints(cls, q):
+        q = np.asarray(q, dtype=float)
+        if q.shape != (6,) or not np.isfinite(q).all():
+            raise ValueError("姿态需要六个有限的关节角（rad）")
+        return cls.wrap(q)
+
+    @classmethod
     def motor2dh(cls, positions):
-        return cls.wrap(np.asarray(positions) / cls.ratio)
+        return cls._wrapped_joints(np.asarray(positions) / cls.ratio)
 
     @classmethod
     def from_feedback(cls, feedback):
@@ -34,10 +48,7 @@ class Robot_UR:
                    np.array([f.velocity for f in feedback]) / cls.ratio)
 
     def __init__(self, q, velocity=None):
-        q = np.asarray(q, dtype=float)
-        if q.shape != (6,) or not np.isfinite(q).all():
-            raise ValueError("姿态需要六个有限的关节角（rad）")
-        self.Angle = self.wrap(q)
+        self.Angle = self._wrapped_joints(q)
         self.Velocity = velocity
         self.transforms = np.empty((6, 4, 4))
         parent = np.eye(4)
@@ -53,14 +64,28 @@ class Robot_UR:
         self.Tau_G_Motor = self.gravity_torque()
 
     def gravity_torque(self):
-        """在基座系把各节的抗重力矩投到上游关节轴，换算为电机侧 N·m。"""
-        origins = self.transforms[:, :3, 3]
-        rotations = self.transforms[:, :3, :3]
-        centers = origins + (rotations @ self.mass_com[:, 1:, None])[:, :, 0]
-        forces = np.zeros((6, 3))
-        forces[:, 2] = 9.80665 * self.mass_com[:, 0]
+        return self.gravity_at(self.Angle)
+
+    @classmethod
+    def gravity_at(cls, angles):
+        """按六个 DH 关节角递推电机侧抗重力矩（N·m）。"""
+        # 由基座向末端，把竖直向上的补偿加速度转到各关节系。
+        gx, gy, gz = 0.0, 0.0, 9.80665
+        joints = []
+        for angle, ca, sa in zip(angles, cls.twist_cos, cls.twist_sin):
+            c, s = cos(angle), sin(angle)
+            gy, gz = ca * gy + sa * gz, -sa * gy + ca * gz
+            gx, gy = c * gx + s * gy, -s * gx + c * gy
+            joints.append((gx, gy, c, s, ca, sa))
+
+        # 由末端向基座合并质量一阶矩 h。绕本节 z 轴的力矩为 (h × g) 的 z 分量。
+        hx = hy = hz = 0.0
         torque = np.empty(6)
-        for i in range(6):
-            moment = np.cross(centers[i:] - origins[i], forces[i:]).sum(axis=0)
-            torque[i] = moment @ rotations[i, :, 2]
-        return torque / self.ratio
+        for i in range(5, -1, -1):
+            gx, gy, c, s, ca, sa = joints[i]
+            mx, my, mz = cls._link_moments[i]
+            hx, hy, hz = hx + mx, hy + my, hz + mz
+            torque[i] = hx * gy - hy * gx
+            hx, hy = c * hx - s * hy, s * hx + c * hy
+            hy, hz = ca * hy - sa * hz, sa * hy + ca * hz
+        return torque / cls.ratio
