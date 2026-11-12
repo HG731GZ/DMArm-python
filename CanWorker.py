@@ -89,7 +89,7 @@ class Snapshot:
 
 class CanWorker(Thread):
     def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
-                 tool_update_cycles, controller=None, tune_limits=None):
+                 tool_update_cycles, force_requires_slave_follow=True, controller=None, tune_limits=None):
         super().__init__(name="DMArm-CAN-FD")
         if type(tool_update_cycles) is not int or tool_update_cycles < 1:
             raise ValueError("夹钳发送间隔必须为正整数（轮）")
@@ -107,6 +107,7 @@ class CanWorker(Thread):
         self.remote_link = None
         self.remote_action = ""
         self.remote_frame = None
+        self.force_requires_slave_follow = force_requires_slave_follow
         self.clear_force_feedback()
         self.force_output_pending = False
         self.commands = {}
@@ -793,6 +794,9 @@ class CanWorker(Thread):
     def clear_force_feedback(self):
         self.force_link = self.force_generation = None
 
+    def slave_allows_force_feedback(self, frame):
+        return not self.force_requires_slave_follow or (frame is not None and frame.teleop_state != 0)
+
     def can_reflect_force(self, state):
         return (state.opened and state.streaming and state.gravity and state.coherent
                 and not state.uncertain and not state.faulted and not state.tune_node
@@ -804,6 +808,9 @@ class CanWorker(Thread):
         frame = link.fresh() if link else None
         if frame is None or not self.can_reflect_force(self.state):
             self.report("阻抗力反馈需要六轴 MIT 使能、重力补偿、新鲜的主从关节反馈，且至少一轴力反馈上限大于 0")
+            return
+        if not self.slave_allows_force_feedback(frame):
+            self.report("从端未开启跟随，无法开启阻抗力反馈")
             return
         self.force_link = link
         self.force_generation = frame.generation
@@ -817,6 +824,10 @@ class CanWorker(Thread):
         if frame is None or frame.generation != self.force_generation:
             self.clear_force_feedback()
             self.report("从端关节位置断流，阻抗力反馈已关闭")
+            return None
+        if not self.slave_allows_force_feedback(frame):
+            self.clear_force_feedback()
+            self.report("从端已退出跟随，阻抗力反馈已关闭")
             return None
         sample = self.joint_sample
         if sample is None or perf_counter() - sample.oldest_at > self.controller.hold.max_dt:

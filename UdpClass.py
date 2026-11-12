@@ -11,8 +11,8 @@ from zlib import crc32
 
 HEADER = bytes.fromhex("55 AA 55 AA")
 FOOTER = b"\r\n\r\n"
-# 从端载荷依次为关节角、模式、夹钳字段、实际速度和净驱动力矩，六轴均按 J1～J6 排列。
-SLAVE = struct.Struct(">6dB3d6d6d")
+# 从端载荷依次为关节角、模式、夹钳字段、实际速度、净驱动力矩和跟随状态。六轴均按 J1～J6 排列。
+SLAVE = struct.Struct(">6dB3d6d6dB")
 SLAVE_PAYLOAD_END = len(HEADER) + SLAVE.size
 SLAVE_FRAME_SIZE = SLAVE_PAYLOAD_END + 4 + len(FOOTER)
 MASTER = struct.Struct(">6dB3d6d")
@@ -25,6 +25,7 @@ class SlaveFrame:
     grip: tuple
     dq: tuple  # 实际速度，单位 rad/s
     net_torque: tuple  # 净驱动力矩，单位 N·m；从端可逐轴回传 NaN
+    teleop_state: int  # 从端跟随状态，0 表示未开启，非零表示已开启
     received: float
     wall_time: float
     generation: int
@@ -37,10 +38,10 @@ def decode_slave(data):
     if crc32(payload) != int.from_bytes(data[SLAVE_PAYLOAD_END:-len(FOOTER)], "big"):
         raise ValueError("从端帧 CRC32 错误")
     values = SLAVE.unpack(payload)
-    net_torque = values[16:]
+    net_torque = values[16:22]
     if not all(map(isfinite, values[:16])) or any(map(isinf, net_torque)):
         raise ValueError("从端字段含无效数值")
-    return values[:6], values[6], values[7:10], values[10:16], net_torque
+    return values[:6], values[6], values[7:10], values[10:16], net_torque, values[22]
 
 
 def encode_master(q, dq, grip):
@@ -79,14 +80,14 @@ class UdpClass(Thread):
                 self.rejected += 1
                 continue
             try:
-                q, mode, grip, dq, net_torque = decode_slave(data)
+                q, mode, grip, dq, net_torque, teleop_state = decode_slave(data)
             except ValueError:
                 self.rejected += 1
                 continue
             now = monotonic()
             if self.latest is None or now - self.latest.received > self.timeout:
                 generation += 1
-            self.latest = SlaveFrame(q, mode, grip, dq, net_torque, now, time(), generation)
+            self.latest = SlaveFrame(q, mode, grip, dq, net_torque, teleop_state, now, time(), generation)
             self.rx += 1
 
     def fresh(self):

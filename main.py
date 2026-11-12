@@ -31,7 +31,7 @@ UDP_REMOTE_IP = "192.168.3.14"  # 从端目的地址
 UDP_REMOTE_PORT = 5005  # 从端目的端口
 UDP_SEND_PERIOD_MS = 5  # 主端命令发送间隔，单位 ms
 UDP_TIMEOUT_S = 0.15  # 从端状态新鲜时限，单位 s；运动联调前按现场确认
-TELEOP_LOG_ENABLED = True  # 遥操作时自动开始记录 CSV，设为 False 时仍可用界面按钮手动记录
+TELEOP_LOG_ENABLED = True  # 遥操作时等从端开启跟随后自动记录 CSV，设为 False 时可用按钮手动记录
 QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
@@ -44,8 +44,9 @@ PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩
 GRAVITY_AXES = (True, True, True, True, True, True)
 GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率，无单位
 
+FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW = True  # True 时从端 teleop_state 为 0 会关闭力反馈并禁用按钮
 # J1～J6 阻抗力反馈初值：刚度作用于从端与主端的最短角差，阻尼作用于主端实测关节角速度。
-FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (30.0, 30.0, 30.0, 20.0, 20.0, 20.0)  # 关节刚度，单位 N·m/rad
+FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 20.0, 20.0, 20.0)  # 关节刚度，单位 N·m/rad
 FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 关节阻尼，单位 N·m·s/rad
 # J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼，不影响重力补偿或持位。
 FORCE_FEEDBACK_LIMIT_NM = (5, 5, 5, 2, 2, 2)
@@ -276,11 +277,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.log_generation is not None and (frame is None or frame.generation != self.log_generation):
             self.stop_log("从端反馈断流，日志记录已停止")
             return
-        if not teleoperating:
+        slave_following = frame is not None and frame.teleop_state != 0
+        if not teleoperating or (self.log_mode == "auto" and not slave_following):
             self.auto_log_armed = True
             if self.log_mode == "auto":
                 self.set_log_mode(None)
-        elif TELEOP_LOG_ENABLED and self.auto_log_armed and frame is not None:
+        elif TELEOP_LOG_ENABLED and self.auto_log_armed and slave_following:
             self.auto_log_armed = False
             if self.log_mode is None:
                 self.set_log_mode("auto", frame)
@@ -391,6 +393,7 @@ class MainWindow(QtWidgets.QMainWindow):
             bus, self.ui.listenOnly.isChecked(), cycle_delay=CAN_CYCLE_DELAY_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
             pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
             tool_update_cycles=TOOL_UPDATE_CYCLES,
+            force_requires_slave_follow=FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW,
             controller=controller,
             tune_limits=self.tune_limits,
         )
@@ -455,8 +458,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.pidHoldButton.setText({"空闲": "开启双环持位", "持位": "退出持位", "退出中": "退出中"}[state.hold_state])
         ui.gravityButton.setEnabled(free and six_active)
         ui.gravityButton.setText("关闭重力补偿" if state.gravity else "开启重力补偿")
-        force_ready = bool(ready and self.udp and worker.can_reflect_force(state) and self.udp.fresh())
-        ui.forceFeedbackButton.setEnabled(ready and (state.force_feedback or force_ready))
+        force_frame = self.udp.fresh() if self.udp else None
+        ui.forceFeedbackButton.setEnabled(
+            ready and worker.slave_allows_force_feedback(force_frame)
+            and (state.force_feedback or (force_frame is not None and worker.can_reflect_force(state)))
+        )
         ui.forceFeedbackButton.setText("关闭阻抗力反馈" if state.force_feedback else "开启阻抗力反馈")
         ui.homeButton.setEnabled(free and six_active)
         for button in (ui.toolMitButton, ui.toolPvtButton):

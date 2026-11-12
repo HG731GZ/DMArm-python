@@ -873,7 +873,7 @@ class Ui_Form1(object):
         self.anglesTable.setSortingEnabled(__sortingEnabled)
         self.motorGroup.setTitle(_translate("Form1", "电机设定"))
         self.forceFeedbackButton.setText(_translate("Form1", "开启阻抗力反馈"))
-        self.forceFeedbackButton.setToolTip(_translate("Form1", "六轴 MIT 重力补偿开启后，按（从端角度 − 主端角度）的最短角差 × 刚度 − 主端实测角速度 × 阻尼计算关节反馈力矩。各轴单独限幅，上限为 0 时该轴不输出力反馈。"))
+        self.forceFeedbackButton.setToolTip(_translate("Form1", "启用从端跟随限制时，从端退出跟随会自动关闭力反馈并禁用此按钮。六轴 MIT 重力补偿开启后，按（从端角度 − 主端角度）的最短角差 × 刚度 − 主端实测角速度 × 阻尼计算关节反馈力矩。各轴单独限幅，上限为 0 时该轴不输出力反馈。"))
         self.pidTuneButton.setText(_translate("Form1", "单轴调参"))
         self.pidHoldButton.setText(_translate("Form1", "开启双环持位"))
         self.pidHoldButton.setToolTip(_translate("Form1", "锁存当前六轴 MIT 反馈位置。退出持位后继续重力补偿及已开启的力反馈。"))
