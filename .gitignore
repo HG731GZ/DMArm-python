@@ -1,2 +1,5 @@
 __pycache__/
 /.idea/
+/logs/*
+!/logs/dataproc.m
+!/logs/字段说明.md

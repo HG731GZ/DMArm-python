@@ -6,6 +6,7 @@ import numpy as np
 
 
 class Robot_UR:
+    # 电机角 / DH 关节角的带符号传动比；J3 的电机正向与关节正向相反。
     ratio = np.array([1, 1, -1, 1, 1, 1])
     # 各节相对平移，单位 m；扭转角依次为 0、90、0、0、90、−90 度。
     offsets = np.array([(0, 0, 0), (0, 0, 0), (-.210, 0, 0),
@@ -43,9 +44,14 @@ class Robot_UR:
         return cls._wrapped_joints(np.asarray(positions) / cls.ratio)
 
     @classmethod
+    def joint_state(cls, feedback):
+        """将六轴电机反馈换算为 DH 关节角（rad）及同向的关节角速度（rad/s）。"""
+        return (cls.motor2dh([f.position for f in feedback]),
+                np.array([f.velocity for f in feedback]) / cls.ratio)
+
+    @classmethod
     def from_feedback(cls, feedback):
-        return cls(cls.motor2dh([f.position for f in feedback]),
-                   np.array([f.velocity for f in feedback]) / cls.ratio)
+        return cls(*cls.joint_state(feedback))
 
     def __init__(self, q, velocity=None):
         self.Angle = self._wrapped_joints(q)

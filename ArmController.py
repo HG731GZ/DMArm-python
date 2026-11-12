@@ -1,4 +1,4 @@
-"""UR 本地 MIT 重力补偿、双环持位和 PV 预设位目标换算。"""
+"""UR 主端 MIT 重力补偿、关节阻抗力反馈、双环持位和 PV 预设位目标换算。"""
 
 from dataclasses import dataclass, replace
 from math import isfinite
@@ -63,15 +63,16 @@ class HoldAxis(NamedTuple):
 
 
 class ArmController:
-    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *, force_gain, force_limit):
+    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *, force_stiffness, force_damping, force_limit):
         self.home = six_values("预设角", home)
         self.gravity_gain = six_values("重力补偿倍率", gravity_gain)
         self.gravity_axes = six_values("重力补偿轴", gravity_axes)
         self.gravity_on = False
-        self.force_gain = six_values("力反馈缩放系数", force_gain)
+        self.force_stiffness = six_values("关节反馈刚度", force_stiffness)
+        self.force_damping = six_values("关节反馈阻尼", force_damping)
         self.force_limit = six_values("关节反馈力矩上限", force_limit)
-        if (self.force_gain < 0).any() or (self.force_gain > 1).any() or (self.force_limit <= 0).any():
-            raise ValueError("力反馈系数须在 0～1 之间，关节反馈力矩上限须为正数")
+        if (self.force_stiffness < 0).any() or (self.force_damping < 0).any() or (self.force_limit < 0).any():
+            raise ValueError("关节反馈刚度、阻尼和力矩上限均须为非负数")
         self.hold = hold
         self.output_limit = np.array([m.output_limit for m in motors])
         self.motor_speeds = np.array([m.max_velocity for m in motors])
@@ -94,11 +95,12 @@ class ArmController:
         angles = Robot_UR.motor2dh([f.position for f in feedback])
         return Robot_UR.gravity_at(angles) * self.gravity_gain * self.gravity_axes
 
-    def reflected_torque(self, net_torque):
-        """在关节侧反向、缩放及对称限幅，再按虚功关系换算为电机力矩。"""
-        source = np.array([v if isfinite(v) else 0.0 for v in net_torque])
-        joint = np.clip(-self.force_gain * source, -self.force_limit, self.force_limit)
-        return joint / Robot_UR.ratio
+    def impedance_torque(self, feedback, slave_q):
+        """弹簧将主端拉向从端，阻尼抵抗主端运动；关节侧限幅后按虚功关系换算为电机力矩。"""
+        master_q, master_dq = Robot_UR.joint_state(feedback)
+        error = Robot_UR.wrap(np.asarray(slave_q) - master_q)
+        joint_torque = self.force_stiffness * error - self.force_damping * master_dq
+        return np.clip(joint_torque, -self.force_limit, self.force_limit) / Robot_UR.ratio
 
     def begin_hold(self, q_hold, feedback, last_torque, axes=slice(0, 6)):
         self.axes = axes

@@ -29,10 +29,6 @@ class SlaveFrame:
     wall_time: float
     generation: int
 
-    @property
-    def has_net_torque(self):
-        return any(map(isfinite, self.net_torque))
-
 
 def decode_slave(data):
     if len(data) != SLAVE_FRAME_SIZE or not data.startswith(HEADER) or not data.endswith(FOOTER):

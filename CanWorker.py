@@ -86,12 +86,6 @@ class Snapshot:
     tune_parameters: tuple
     tune_revision: int
 
-    @property
-    def can_reflect_force(self):
-        return (self.opened and self.streaming and self.gravity and self.coherent
-                and not self.uncertain and not self.faulted and not self.tune_node
-                and all(n in self.owned and mode == "MIT" for n, (mode, _) in zip(JOINTS, self.motors)))
-
 
 class CanWorker(Thread):
     def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
@@ -581,7 +575,7 @@ class CanWorker(Thread):
         if perf_counter() - self.joint_sample.oldest_at > self.controller.hold.max_dt:
             raise ZlgError("双环持位六轴反馈超时")
 
-    def prepare_hold(self):
+    def prepare_hold(self, force_torque):
         self.hold_checkpoint()
         ctl = self.controller
         sample = self.joint_sample
@@ -602,7 +596,7 @@ class CanWorker(Thread):
             dt = sample.sampled_at - self.last_hold_sample_at
             if not 0 < dt <= ctl.hold.max_dt:
                 raise ZlgError(f"持位采样间隔异常：{dt * 1000:.2f} ms")
-        commands, goals = ctl.step_hold(sample.feedback, dt, self.force_torque)
+        commands, goals = ctl.step_hold(sample.feedback, dt, force_torque)
         self.last_hold_sample_at = sample.sampled_at
         matched = True
         for n, torque, goal in zip(JOINTS[ctl.axes], commands, goals):
@@ -631,17 +625,16 @@ class CanWorker(Thread):
         motors = self.bus.motors
         if self.remote_action:
             self.update_remote()
-        if self.force_link is not None:
-            self.update_force_feedback()
+        force_torque = self.force_feedback_torque()
         holding = ctl and ctl.hold_state != "空闲"
         released = False
         if holding:
-            released = self.prepare_hold()
+            released = self.prepare_hold(force_torque)
         elif ctl and ctl.gravity_on and not self.tune_node and any(motors[n].mode == 1 for n in JOINTS):
             feedback = tuple(motors[n].feedback for n in JOINTS)
             torques = ctl.gravity_commands(feedback)
-            if self.force_torque is not None:
-                torques += self.force_torque
+            if force_torque is not None:
+                torques += force_torque
             for node in JOINTS:
                 motor = motors[node]
                 if motor.mode == 1:
@@ -655,14 +648,14 @@ class CanWorker(Thread):
             check = self.hold_checkpoint if holding else self.checkpoint
             sent_at = perf_counter()
             # 收齐无反馈分量的新指令应答前，停发仍需撤去可能已经下发的反馈力矩。
-            if self.force_torque is not None:
+            if force_torque is not None:
                 self.force_output_pending = True
             self.bus.exchange(frames, expected, check, queued=self.queued_cycles)
             if holding:
                 exchanged_at = perf_counter()
                 check()
             self.confirm_batch(expected)
-            self.force_output_pending = self.force_torque is not None
+            self.force_output_pending = force_torque is not None
             if holding:
                 has_tool = 7 in expected
                 if has_tool not in self.reported_batches:
@@ -798,28 +791,39 @@ class CanWorker(Thread):
         self.remote_action = ""
 
     def clear_force_feedback(self):
-        self.force_link = self.force_frame = self.force_torque = None
+        self.force_link = self.force_generation = None
+
+    def can_reflect_force(self, state):
+        return (state.opened and state.streaming and state.gravity and state.coherent
+                and not state.uncertain and not state.faulted and not state.tune_node
+                and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= self.controller.hold.max_dt
+                and any(self.controller.force_limit)
+                and all(n in state.owned and mode == "MIT" for n, (mode, _) in zip(JOINTS, state.motors)))
 
     def start_force_feedback(self, link):
         frame = link.fresh() if link else None
-        if not self.state.can_reflect_force or not frame or not frame.has_net_torque:
-            self.report("力反馈需要六轴 MIT 使能周期、重力补偿及有效的从端净驱动力矩")
+        if frame is None or not self.can_reflect_force(self.state):
+            self.report("阻抗力反馈需要六轴 MIT 使能、重力补偿、新鲜的主从关节反馈，且至少一轴力反馈上限大于 0")
             return
         self.force_link = link
-        self.force_frame = frame
-        self.force_torque = self.controller.reflected_torque(frame.net_torque)
-        self.report("力反馈已开启")
+        self.force_generation = frame.generation
+        self.report("关节阻抗力反馈已开启")
 
-    def update_force_feedback(self):
+    def force_feedback_torque(self):
+        """每轮使用最近的完整主端样本，即使从端仍是同一帧也要重算弹簧和阻尼。"""
+        if self.force_link is None:
+            return None
         frame = self.force_link.fresh()
-        if frame is self.force_frame:
-            return
-        if not frame or frame.generation != self.force_frame.generation or not frame.has_net_torque:
+        if frame is None or frame.generation != self.force_generation:
             self.clear_force_feedback()
-            self.report("从端断流或净驱动力矩全部无效，力反馈已关闭")
-            return
-        self.force_frame = frame
-        self.force_torque = self.controller.reflected_torque(frame.net_torque)
+            self.report("从端关节位置断流，阻抗力反馈已关闭")
+            return None
+        sample = self.joint_sample
+        if sample is None or perf_counter() - sample.oldest_at > self.controller.hold.max_dt:
+            self.clear_force_feedback()
+            self.report("主端六轴反馈缺失或已过期，阻抗力反馈已关闭")
+            return None
+        return self.controller.impedance_torque(sample.feedback, frame.q)
 
     def hold_remote(self, reason):
         self.clear_remote()

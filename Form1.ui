@@ -598,7 +598,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
            <column><property name="text"><string>从端速度
 (rad/s)</string></property><property name="toolTip"><string>从端回传的关节实际速度。</string></property></column>
            <column><property name="text"><string>从端净力矩
-(N·m)</string></property><property name="toolTip"><string>从端回传的净驱动力矩。该轴回传 NaN 时显示“无效”。</string></property></column>
+(N·m)</string></property><property name="toolTip"><string>从端回传的净驱动力矩，仅供观察。该轴回传 NaN 时显示“无效”，不影响阻抗力反馈。</string></property></column>
            <item row="0" column="0">
             <property name="text">
              <string>J1</string>
@@ -787,8 +787,8 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
          <item row="1" column="3">
           <widget class="QPushButton" name="forceFeedbackButton">
            <property name="enabled"><bool>false</bool></property>
-           <property name="text"><string>开启力反馈</string></property>
-           <property name="toolTip"><string>六轴 MIT 重力补偿期间，将从端关节净驱动力矩逐轴缩小、反向并限幅后叠加到主端。无效轴的反馈分量为零。</string></property>
+           <property name="text"><string>开启阻抗力反馈</string></property>
+           <property name="toolTip"><string>六轴 MIT 重力补偿开启后，按（从端角度 − 主端角度）的最短角差 × 刚度 − 主端实测角速度 × 阻尼计算关节反馈力矩。各轴单独限幅，上限为 0 时该轴不输出力反馈。</string></property>
           </widget>
          </item>
          <item row="1" column="4">
@@ -1129,6 +1129,13 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
         <widget class="QCheckBox" name="publishMaster">
          <property name="text"><string>发布主端命令</string></property>
          <property name="enabled"><bool>false</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="logButton">
+         <property name="text"><string>记录日志</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="toolTip"><string>按遥操作节拍记录已有数据，缺失值写为 NULL。再次点击或从端反馈断流时停止记录。</string></property>
         </widget>
        </item>
        <item>
