@@ -44,10 +44,14 @@ class Robot_UR:
         return cls._wrapped_joints(np.asarray(positions) / cls.ratio)
 
     @classmethod
+    def joint_velocity(cls, feedback):
+        """按带符号传动比将六轴电机速度换算为 DH 关节角速度（rad/s）。"""
+        return np.array([f.velocity for f in feedback]) / cls.ratio
+
+    @classmethod
     def joint_state(cls, feedback):
         """将六轴电机反馈换算为 DH 关节角（rad）及同向的关节角速度（rad/s）。"""
-        return (cls.motor2dh([f.position for f in feedback]),
-                np.array([f.velocity for f in feedback]) / cls.ratio)
+        return cls.motor2dh([f.position for f in feedback]), cls.joint_velocity(feedback)
 
     @classmethod
     def from_feedback(cls, feedback):

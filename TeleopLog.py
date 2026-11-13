@@ -26,7 +26,7 @@ SLAVE_COLUMNS = (
 MASTER_COLUMNS = (
     "master_can_cycle", "master_feedback_max_age_ms", "master_force_feedback_on",
     *joint_columns("master", "q_rad"), "master_udp_mode", "master_udp_grip_1", "master_udp_grip_2", "master_udp_grip_3",
-    *joint_columns("master", "dq_rad_s"),
+    *joint_columns("master", "dq_rad_s"), *joint_columns("master", "filtered_velocity_error_rad_s"),
     *(f"master_{name}_motor_{field}" for name in MOTOR_NAMES for field in MOTOR_FIELDS), "master_gripper_force_n",
     *(f"master_j{n}_{field}" for n in JOINTS for field in ("mit_command_nm", "pv_command_rad")),
 )
@@ -58,6 +58,8 @@ class TeleopSample(NamedTuple):
             return (None,) * len(MASTER_COLUMNS)
         age_ms = (self.sampled_at - state.feedback_at) * 1000 if state.feedback_at else None
         row = [state.cycles, age_ms, int(state.force_feedback), *self.master_motion(state.motors)]
+        velocity_error = state.filtered_velocity_error if self.slave is not None else None
+        row.extend(velocity_error if velocity_error is not None else (None,) * len(JOINTS))
         for _, fb in state.motors:
             if fb is None:
                 row.extend((None,) * len(MOTOR_FIELDS))

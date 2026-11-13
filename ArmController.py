@@ -1,7 +1,7 @@
 """UR 主端 MIT 重力补偿、关节阻抗力反馈、双环持位和 PV 预设位目标换算。"""
 
 from dataclasses import dataclass, replace
-from math import isfinite
+from math import expm1, isfinite
 from typing import NamedTuple
 
 import numpy as np
@@ -63,7 +63,8 @@ class HoldAxis(NamedTuple):
 
 
 class ArmController:
-    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *, force_stiffness, force_damping, force_limit):
+    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *,
+                 force_stiffness, force_damping, force_velocity_filter_s, force_limit):
         self.home = six_values("预设角", home)
         self.gravity_gain = six_values("重力补偿倍率", gravity_gain)
         self.gravity_axes = six_values("重力补偿轴", gravity_axes)
@@ -73,6 +74,10 @@ class ArmController:
         self.force_limit = six_values("关节反馈力矩上限", force_limit)
         if (self.force_stiffness < 0).any() or (self.force_damping < 0).any() or (self.force_limit < 0).any():
             raise ValueError("关节反馈刚度、阻尼和力矩上限均须为非负数")
+        if not isfinite(force_velocity_filter_s) or force_velocity_filter_s < 0:
+            raise ValueError("力反馈速度差滤波时间常数须为非负有限秒数")
+        self.force_velocity_filter_s = force_velocity_filter_s
+        self.reset_velocity_filter()
         self.hold = hold
         self.output_limit = np.array([m.output_limit for m in motors])
         self.motor_speeds = np.array([m.max_velocity for m in motors])
@@ -95,11 +100,28 @@ class ArmController:
         angles = Robot_UR.motor2dh([f.position for f in feedback])
         return Robot_UR.gravity_at(angles) * self.gravity_gain * self.gravity_axes
 
+    def reset_velocity_filter(self):
+        self.filtered_velocity_error = None
+        self.last_velocity_sample_at = None
+
+    def update_velocity_error(self, feedback, slave_dq, sampled_at, max_dt):
+        """按六轴 CAN 样本间隔滤波，首拍及中断后的首拍均从实测速度差起算。"""
+        dt = sampled_at - self.last_velocity_sample_at if self.last_velocity_sample_at is not None else None
+        if dt == 0 and self.force_velocity_filter_s > 0:
+            return
+        velocity_error = np.asarray(slave_dq) - Robot_UR.joint_velocity(feedback)
+        if dt is None or dt > max_dt or self.force_velocity_filter_s == 0:
+            self.filtered_velocity_error = velocity_error
+        else:
+            alpha = -expm1(-dt / self.force_velocity_filter_s)
+            self.filtered_velocity_error += alpha * (velocity_error - self.filtered_velocity_error)
+        self.last_velocity_sample_at = sampled_at
+
     def impedance_torque(self, feedback, slave_q):
-        """弹簧将主端拉向从端，阻尼抵抗主端运动；关节侧限幅后按虚功关系换算为电机力矩。"""
-        master_q, master_dq = Robot_UR.joint_state(feedback)
+        """由本拍最短角差与已更新的滤波速度差计算阻抗，关节侧限幅后换算为电机力矩。"""
+        master_q = Robot_UR.motor2dh([f.position for f in feedback])
         error = Robot_UR.wrap(np.asarray(slave_q) - master_q)
-        joint_torque = self.force_stiffness * error - self.force_damping * master_dq
+        joint_torque = self.force_stiffness * error + self.force_damping * self.filtered_velocity_error
         return np.clip(joint_torque, -self.force_limit, self.force_limit) / Robot_UR.ratio
 
     def begin_hold(self, q_hold, feedback, last_torque, axes=slice(0, 6)):

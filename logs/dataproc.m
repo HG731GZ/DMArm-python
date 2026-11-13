@@ -44,5 +44,21 @@ clear logIndex logName logParts logGroup logColumns logAxis
 %%
 
 master_slave_qd=master_q_rad-slave_q_rad;
+master_slave_dqd=master_dq_rad_s-slave_dq_rad_s;
+k=[40,40,40,20,20,20];
+b=[10, 10, 10, 5, 5, 5]*0.5;
+fd_torque=master_slave_qd.*k-master_slave_dqd.*b;
+fd_torque_nodamping=master_slave_qd.*k;
 figure(1);clf(1);
-plot(master_slave_qd(:,3));
+plot(fd_torque(:,3));
+hold on;
+plot(fd_torque_nodamping(:,3));
+legend([{'damping'},{'no damping'}]);
+
+figure(2);clf(2);
+plot(master_slave_dqd(:,3));
+hold on;
+% 主从反馈有效时持续记录滤波值。图中取相反数，使两条曲线均为主端减从端。
+plot(-master_filtered_velocity_error_rad_s(:,3));
+ylabel('J3 主端减从端角速度 (rad/s)');
+legend('原始速度差', '滤波后速度差');

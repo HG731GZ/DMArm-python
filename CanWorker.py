@@ -63,6 +63,7 @@ class Snapshot:
     streaming: bool
     gravity: bool
     force_feedback: bool
+    filtered_velocity_error: tuple[float, ...] | None
     hold_state: str
     hold_details: tuple
     joint_sample_at: float
@@ -89,7 +90,7 @@ class Snapshot:
 
 class CanWorker(Thread):
     def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
-                 tool_update_cycles, force_requires_slave_follow=True, controller=None, tune_limits=None):
+                 tool_update_cycles, force_requires_slave_follow=True, controller=None, tune_limits=None, slave_link=None):
         super().__init__(name="DMArm-CAN-FD")
         if type(tool_update_cycles) is not int or tool_update_cycles < 1:
             raise ValueError("夹钳发送间隔必须为正整数（轮）")
@@ -107,6 +108,8 @@ class CanWorker(Thread):
         self.remote_link = None
         self.remote_action = ""
         self.remote_frame = None
+        self.slave_link = slave_link
+        self.velocity_stream = None
         self.force_requires_slave_follow = force_requires_slave_follow
         self.clear_force_feedback()
         self.force_output_pending = False
@@ -144,15 +147,20 @@ class CanWorker(Thread):
         self.publish()
 
     def publish(self):
+        if not self.streaming:
+            self.observe_idle_velocities()
         with self.cv:
             if self.tune_point is not None:
                 self.tune_points.append(self.tune_point)
                 self.tune_point = None
+            # 滤波器会原地更新数组，发布快照时复制六轴数值供异步记录。
+            velocity_error = self.controller.filtered_velocity_error if self.controller is not None else None
             self.state = Snapshot(
                 self.bus.started, bool(self.current or self.pending), self.first_read,
                 frozenset(self.verified), frozenset(self.owned), frozenset(self.uncertain),
                 self.streaming, bool(self.controller and self.controller.gravity_on),
                 self.force_link is not None,
+                tuple(velocity_error) if velocity_error is not None else None,
                 self.controller.hold_state if self.controller else "空闲",
                 self.controller.details if self.controller else (),
                 self.joint_sample.oldest_at if self.joint_sample else 0.0,
@@ -371,6 +379,7 @@ class CanWorker(Thread):
         with self.cv:
             self.joint_sample = None
         self.last_torque.clear()
+        self.reset_velocity_filter()
 
     def parameter_columns(self):
         return tuple(tuple(getattr(self.controller.hold, name)) for name in HOLD_FIELDS) if self.controller else ()
@@ -626,7 +635,11 @@ class CanWorker(Thread):
         motors = self.bus.motors
         if self.remote_action:
             self.update_remote()
-        force_torque = self.force_feedback_torque()
+        link = self.slave_link
+        frame = link.fresh() if link is not None else None
+        if ctl is not None:
+            self.update_velocity_observation(link, frame, self.joint_sample, ctl.hold.max_dt)
+        force_torque = self.force_feedback_torque(link, frame)
         holding = ctl and ctl.hold_state != "空闲"
         released = False
         if holding:
@@ -794,6 +807,36 @@ class CanWorker(Thread):
     def clear_force_feedback(self):
         self.force_link = self.force_generation = None
 
+    def reset_velocity_filter(self):
+        self.velocity_stream = None
+        if self.controller is not None:
+            self.controller.reset_velocity_filter()
+
+    def update_velocity_observation(self, link, frame, sample, max_dt):
+        if frame is None or sample is None or perf_counter() - sample.oldest_at > max_dt:
+            self.reset_velocity_filter()
+            return
+        # 不同 UDP 连接的段编号会重复。换连接或断流恢复时，首拍重新取实测速度差。
+        stream = (link, frame.generation)
+        if stream != self.velocity_stream:
+            self.controller.reset_velocity_filter()
+            self.velocity_stream = stream
+        self.controller.update_velocity_error(sample.feedback, frame.dq, sample.sampled_at, max_dt)
+
+    def observe_idle_velocities(self):
+        """只听、读取状态及失能姿态采样时，用已有回包更新速度差，不额外发送查询。"""
+        if self.controller is None:
+            return
+        link = self.slave_link
+        frame = link.fresh() if link is not None else None
+        sample = None
+        if frame is not None and self.bus.started and self.coherent and not self.faulted:
+            motors = self.bus.motors
+            feedback = tuple(motors[n].feedback for n in JOINTS)
+            if all(fb is not None for fb in feedback):
+                sample = JointSample(feedback, tuple(motors[n].feedback_at for n in JOINTS))
+        self.update_velocity_observation(link, frame, sample, self.bus.timeout)
+
     def slave_allows_force_feedback(self, frame):
         return not self.force_requires_slave_follow or (frame is not None and frame.teleop_state != 0)
 
@@ -816,12 +859,11 @@ class CanWorker(Thread):
         self.force_generation = frame.generation
         self.report("关节阻抗力反馈已开启")
 
-    def force_feedback_torque(self):
-        """每轮使用最近的完整主端样本，即使从端仍是同一帧也要重算弹簧和阻尼。"""
+    def force_feedback_torque(self, link, frame):
+        """力反馈开启时使用本轮观测值输出阻抗力矩。"""
         if self.force_link is None:
             return None
-        frame = self.force_link.fresh()
-        if frame is None or frame.generation != self.force_generation:
+        if link is not self.force_link or frame is None or frame.generation != self.force_generation:
             self.clear_force_feedback()
             self.report("从端关节位置断流，阻抗力反馈已关闭")
             return None

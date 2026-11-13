@@ -788,7 +788,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
           <widget class="QPushButton" name="forceFeedbackButton">
            <property name="enabled"><bool>false</bool></property>
            <property name="text"><string>开启阻抗力反馈</string></property>
-           <property name="toolTip"><string>启用从端跟随限制时，从端退出跟随会自动关闭力反馈并禁用此按钮。六轴 MIT 重力补偿开启后，按（从端角度 − 主端角度）的最短角差 × 刚度 − 主端实测角速度 × 阻尼计算关节反馈力矩。各轴单独限幅，上限为 0 时该轴不输出力反馈。</string></property>
+           <property name="toolTip"><string>六轴 MIT 重力补偿开启后，关节反馈力矩 = 刚度 × 最短角差 + 阻尼 × 滤波后的角速度差。角差和速度差均取从端减主端，各轴单独限幅，上限为 0 时关闭该轴力反馈。启用跟随限制时，从端退出跟随会自动关闭力反馈并禁用此按钮。</string></property>
           </widget>
          </item>
          <item row="1" column="4">

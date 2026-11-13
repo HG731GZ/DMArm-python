@@ -45,9 +45,10 @@ GRAVITY_AXES = (True, True, True, True, True, True)
 GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率，无单位
 
 FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW = True  # True 时从端 teleop_state 为 0 会关闭力反馈并禁用按钮
-# J1～J6 阻抗力反馈初值：刚度作用于从端与主端的最短角差，阻尼作用于主端实测关节角速度。
+# J1～J6 阻抗力反馈使用最短关节角差和实测关节角速度差，两者均取从端减主端。
 FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 20.0, 20.0, 20.0)  # 关节刚度，单位 N·m/rad
 FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 关节阻尼，单位 N·m·s/rad
+FORCE_FEEDBACK_VELOCITY_FILTER_S = 0.010  # 速度差一阶低通时间常数，单位 s，设为 0 则直接使用实测速度差
 # J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼，不影响重力补偿或持位。
 FORCE_FEEDBACK_LIMIT_NM = (5, 5, 5, 2, 2, 2)
 
@@ -186,6 +187,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ui.udpStatus.setText(f"打开 UDP 失败：{error}")
             return
         self.udp.start()
+        if self.worker is not None:
+            self.worker.slave_link = self.udp
         self.ui.remotePort.setEnabled(False)
         self.ui.udpButton.setText("关闭 UDP")
         self.refresh_pose_display()
@@ -195,6 +198,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.log_generation is not None:
             self.stop_log("UDP 已断开，日志记录已停止")
         self.ui.publishMaster.setChecked(False)
+        if self.worker is not None:
+            self.worker.slave_link = None
         self.udp.close()
         self.udp = None
         self.ui.udpButton.setText("打开 UDP")
@@ -385,6 +390,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                        [bus.motors[n] for n in JOINTS],
                                        force_stiffness=FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                                        force_damping=FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
+                                       force_velocity_filter_s=FORCE_FEEDBACK_VELOCITY_FILTER_S,
                                        force_limit=FORCE_FEEDBACK_LIMIT_NM)
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
@@ -396,6 +402,7 @@ class MainWindow(QtWidgets.QMainWindow):
             force_requires_slave_follow=FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW,
             controller=controller,
             tune_limits=self.tune_limits,
+            slave_link=self.udp,
         )
         self.ui.frameLog.clear()
         self.worker.start()
