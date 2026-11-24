@@ -7,6 +7,7 @@ from typing import NamedTuple
 import numpy as np
 
 from Robot_UR import Robot_UR
+from FreeSpacePredictor import FreeSpacePredictor
 
 
 HOLD_FIELDS = ("pos_kp", "pos_ki", "pos_kd", "vel_kp", "vel_ki", "vel_kd", "pid_limit",
@@ -62,9 +63,27 @@ class HoldAxis(NamedTuple):
     rate_limited: bool
 
 
+class PredictionObservation(NamedTuple):
+    sampled_at: float
+    slave_received_unix_s: float
+    q: tuple
+    dq: tuple
+    position_error: tuple
+    velocity_error: tuple
+    raw_position_error: tuple
+    stiffness_limits: tuple
+    weighted_torque: tuple
+
+    def candidate_torque(self, errors, damping):
+        """日志线程用同一拍的位置误差和本地阻尼还原候选力矩。"""
+        return tuple(max(-limit, min(limit, k * error + local))
+                     for (k, limit), error, local in zip(self.stiffness_limits, errors, damping))
+
+
 class ArmController:
     def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *,
-                 force_stiffness, force_damping, force_velocity_filter_s, force_limit):
+                 force_stiffness, force_damping, force_velocity_filter_s, force_limit,
+                 force_prediction_enabled, force_prediction_weight, free_space_parameters):
         self.home = six_values("预设角", home)
         self.gravity_gain = six_values("重力补偿倍率", gravity_gain)
         self.gravity_axes = six_values("重力补偿轴", gravity_axes)
@@ -72,11 +91,17 @@ class ArmController:
         self.force_stiffness = six_values("关节反馈刚度", force_stiffness)
         self.force_damping = six_values("关节反馈阻尼", force_damping)
         self.force_limit = six_values("关节反馈力矩上限", force_limit)
+        self.stiffness_limits = tuple(zip(self.force_stiffness.tolist(), self.force_limit.tolist()))
+        self.force_prediction_weight = six_values("预测位置补偿权重", force_prediction_weight)
         if (self.force_stiffness < 0).any() or (self.force_damping < 0).any() or (self.force_limit < 0).any():
             raise ValueError("关节反馈刚度、阻尼和力矩上限均须为非负数")
+        if ((self.force_prediction_weight < 0) | (self.force_prediction_weight > 1)).any():
+            raise ValueError("预测位置补偿权重各项须位于 0～1")
         if not isfinite(force_velocity_filter_s) or force_velocity_filter_s < 0:
             raise ValueError("力反馈速度差滤波时间常数须为非负有限秒数")
         self.force_velocity_filter_s = force_velocity_filter_s
+        self.force_prediction_enabled = force_prediction_enabled
+        self.predictor = FreeSpacePredictor(free_space_parameters)
         self.reset_velocity_filter()
         self.hold = hold
         self.output_limit = np.array([m.output_limit for m in motors])
@@ -102,14 +127,53 @@ class ArmController:
 
     def reset_velocity_filter(self):
         self.filtered_velocity_error = None
+        self.local_damping_torque = None
         self.last_velocity_sample_at = None
+        self.reset_prediction()
+
+    def reset_prediction(self):
+        self.predictor.reset()
+        self.prediction_frame = None
+        self.predicted_q = self.predicted_dq = None
+        self.prediction_velocity_error = None
+        self.last_prediction_sample_at = None
+        self.prediction_observation = None
+
+    def update_prediction(self, feedback, frame, commands, sampled_at, max_dt):
+        """新从端帧按实际发布历史推进预测，残差滤波使用控制采用的 CAN 样本间隔。"""
+        if frame is not self.prediction_frame:
+            if self.predictor.origin is None:
+                self.predictor.initialize(frame.received, frame.q, frame.dq)
+            self.predicted_q, self.predicted_dq = self.predictor.advance(frame.received, commands)
+            self.prediction_frame = frame
+        dt = sampled_at - self.last_prediction_sample_at if self.last_prediction_sample_at is not None else None
+        residual = np.asarray(frame.dq) - self.predicted_dq
+        if dt is None or dt > max_dt or self.force_velocity_filter_s == 0:
+            self.prediction_velocity_error = residual
+        elif dt > 0:
+            alpha = -expm1(-dt / self.force_velocity_filter_s)
+            self.prediction_velocity_error += alpha * (residual - self.prediction_velocity_error)
+        self.last_prediction_sample_at = sampled_at
+        error = Robot_UR.wrap(np.asarray(frame.q) - self.predicted_q)
+        raw_error = Robot_UR.wrap(np.asarray(frame.q) - Robot_UR.motor2dh([f.position for f in feedback]))
+        # 在限幅前混合两种位置误差，权重不缩放本地阻尼。
+        weight = self.force_prediction_weight
+        weighted = self.force_stiffness * ((1 - weight) * raw_error + weight * error) + self.local_damping_torque
+        self.prediction_observation = PredictionObservation(
+            sampled_at, frame.wall_time, tuple(Robot_UR.wrap(self.predicted_q)), tuple(self.predicted_dq),
+            tuple(error), tuple(self.prediction_velocity_error),
+            tuple(raw_error), self.stiffness_limits,
+            tuple(np.clip(weighted, -self.force_limit, self.force_limit)),
+        )
 
     def update_velocity_error(self, feedback, slave_dq, sampled_at, max_dt):
-        """按六轴 CAN 样本间隔滤波，首拍及中断后的首拍均从实测速度差起算。"""
+        """本地阻尼直接取本拍主端速度；主从滤波速度差仅用于日志观测。"""
+        master_velocity = Robot_UR.joint_velocity(feedback)
+        self.local_damping_torque = -self.force_damping * master_velocity
         dt = sampled_at - self.last_velocity_sample_at if self.last_velocity_sample_at is not None else None
         if dt == 0 and self.force_velocity_filter_s > 0:
             return
-        velocity_error = np.asarray(slave_dq) - Robot_UR.joint_velocity(feedback)
+        velocity_error = np.asarray(slave_dq) - master_velocity
         if dt is None or dt > max_dt or self.force_velocity_filter_s == 0:
             self.filtered_velocity_error = velocity_error
         else:
@@ -118,10 +182,12 @@ class ArmController:
         self.last_velocity_sample_at = sampled_at
 
     def impedance_torque(self, feedback, slave_q):
-        """由本拍最短角差与已更新的滤波速度差计算阻抗，关节侧限幅后换算为电机力矩。"""
+        """位置弹簧叠加主端本地阻尼，关节侧合成限幅后换算为电机力矩。"""
+        if self.force_prediction_enabled:
+            return np.asarray(self.prediction_observation.weighted_torque) / Robot_UR.ratio
         master_q = Robot_UR.motor2dh([f.position for f in feedback])
         error = Robot_UR.wrap(np.asarray(slave_q) - master_q)
-        joint_torque = self.force_stiffness * error + self.force_damping * self.filtered_velocity_error
+        joint_torque = self.force_stiffness * error + self.local_damping_torque
         return np.clip(joint_torque, -self.force_limit, self.force_limit) / Robot_UR.ratio
 
     def begin_hold(self, q_hold, feedback, last_torque, axes=slice(0, 6)):

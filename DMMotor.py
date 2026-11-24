@@ -130,6 +130,12 @@ class DMMotor:
         """按 MIT 指令量程还原实际下发的 12 位力矩字段。"""
         return (2 * code - 4095) * self.max_torque / 4095
 
+    def joint_command_value(self, mode, data):
+        """从已确认的关节批次取实际 MIT 力矩或 PV 位置。"""
+        if mode == 1:
+            return self.torque_value(self.payload_torque_code(data))
+        return struct.unpack_from("<f", data)[0]
+
     def encode_mit(self, position, velocity, torque, kp, kd):
         """按电机协议量程编码 MIT 目标，返回八字节载荷。"""
         p = int((position + self.max_position) * 65535 / (2 * self.max_position))

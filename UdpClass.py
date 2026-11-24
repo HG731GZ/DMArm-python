@@ -1,10 +1,11 @@
 """UR 主从 UDP 报文与独立的从端接收线程。"""
 
+from collections import deque
 from dataclasses import dataclass
 from math import isfinite, isinf
 import socket
 import struct
-from threading import Event, Thread
+from threading import Condition, Event, Thread
 from time import monotonic, time
 from zlib import crc32
 
@@ -17,6 +18,12 @@ SLAVE = struct.Struct(">6dB3d6d6dB6d")
 SLAVE_PAYLOAD_END = len(HEADER) + SLAVE.size
 SLAVE_FRAME_SIZE = SLAVE_PAYLOAD_END + 4 + len(FOOTER)
 MASTER = struct.Struct(">6dB3d6d")
+
+
+@dataclass(frozen=True)
+class MasterCommand:
+    sent_at: float  # 单调时钟，与 SlaveFrame.received 同一时间轴
+    q: tuple
 
 
 @dataclass(frozen=True)
@@ -53,13 +60,18 @@ def encode_master(q, dq, grip):
 
 
 class UdpClass(Thread):
-    def __init__(self, local, peer, timeout):
+    def __init__(self, local, peer, timeout, *, command_history_s):
         super().__init__(name="DMArm-UDP")
         self.peer = peer
         self.timeout = timeout
         self.latest = None
         self.error = ""
         self.rx = self.rejected = self.tx = 0
+        self.command_history_s = command_history_s
+        self.command_lock = Condition()
+        self.sending = False
+        self.history = (0, ())
+        self.commands = deque()
         self.stopping = Event()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -77,7 +89,7 @@ class UdpClass(Thread):
             except socket.timeout:
                 continue
             except OSError as error:
-                self.error = str(error)
+                self.error = f"UDP 接收失败：{error}"
                 return
             if source != self.peer:
                 self.rejected += 1
@@ -100,9 +112,39 @@ class UdpClass(Thread):
             return frame
         return None
 
-    def send(self, data):
-        self.sock.sendto(data, self.peer)
-        self.tx += 1
+    def send(self, data, session):
+        """只记录实际发送成功的当前会话指令，网络等待在历史锁之外。"""
+        q = MASTER.unpack_from(data, len(HEADER))[:6]
+        with self.command_lock:
+            if session != self.history[0] or self.stopping.is_set():
+                return False
+            self.sending = True
+        try:
+            self.sock.sendto(data, self.peer)
+            now = monotonic()
+            with self.command_lock:
+                self.tx += 1
+                if session != self.history[0]:
+                    return False
+                self.commands.append(MasterCommand(now, q))
+                cutoff = now - self.command_history_s
+                # 保留截止时刻之前的最后一条指令，覆盖零阶保持区间。
+                while len(self.commands) > 1 and self.commands[1].sent_at < cutoff:
+                    self.commands.popleft()
+                self.history = session, tuple(self.commands)
+                return True
+        finally:
+            with self.command_lock:
+                self.sending = False
+                self.command_lock.notify_all()
+
+    def stop_publishing(self):
+        """取消主端发布时结束预测会话，重新勾选后使用新初值。"""
+        with self.command_lock:
+            self.commands.clear()
+            self.history = self.history[0] + 1, ()
+            # 取消返回时，已经开始的旧报文也已结束，随后可关闭套接字。
+            self.command_lock.wait_for(lambda: not self.sending)
 
     def close(self):
         self.stopping.set()

@@ -1,14 +1,26 @@
-"""由单一工作线程持有的 CAN FD 会话和有界请求应答。"""
+"""由收发进程独占的 CAN FD 会话、整批应答与失能确认。"""
 
 from contextlib import ExitStack
-from time import monotonic
+from time import monotonic, perf_counter
+from typing import NamedTuple
 
-from DMMotor import DMMotor, MOTOR_MODELS, PARAM_ID, Read
+from DMMotor import DMMotor, MODE_REGISTER, MOTOR_MODELS, PARAM_ID, Read
 from zlgcan import RX_BATCH, ZlgError, load_backend
 
 
 class OperationInterrupted(Exception):
     """普通操作让出总线，以便处理操作员的停止请求。"""
+
+
+def uninterrupted():
+    """失能和随后的状态回读须一起完成。"""
+
+
+class DisableResult(NamedTuple):
+    nodes: frozenset
+    verified: frozenset
+    uncertain: frozenset
+    queue_error: str
 
 
 class USBCANFD:
@@ -91,7 +103,9 @@ class USBCANFD:
                 self.send(frames)
             raise
         checkpoint()
+        send_started = perf_counter()
         self.send(frames, queued=queued)
+        sent_at = perf_counter()
         if log is not None:
             for can_id, data in frames:
                 log(f"TX CAN FD 标准 ID=0x{can_id:X} BRS=1 长度={len(data)} {data.hex(' ').upper()}")
@@ -99,7 +113,13 @@ class USBCANFD:
         replies = {}
         deadline = monotonic() + self.timeout
         while monotonic() < deadline:
-            checkpoint()
+            try:
+                checkpoint()
+            except ZlgError as error:
+                pending = sorted(node for node, _ in missing)
+                raise ZlgError(f"{error}，发送调用 {(sent_at - send_started) * 1000:.1f} ms，"
+                               f"发送返回后 {(perf_counter() - sent_at) * 1000:.1f} ms，"
+                               f"尚待节点 {pending} 回包") from error
             # 由 SDK 在帧到达时唤醒。短等待使停发请求也能及时接管总线。
             arrived = self.receive(expected, log, wait_ms=1, limit=len(missing))
             replies.update(arrived)
@@ -118,3 +138,57 @@ class USBCANFD:
             motor.feedback = None
         self.exchange([(PARAM_ID, kind.payload(node))], {node: kind}, checkpoint, log)
         return motor.mode if kind is Read.MODE else motor.feedback
+
+    def write_modes(self, value, nodes, continuing, checkpoint, log):
+        """连续完成寄存器写入、应答核对和回读，未换模轴在两批中继续控制。"""
+        writes = {n: bytes((n, 0, 0x55, MODE_REGISTER, value, 0, 0, 0)) for n in nodes}
+        for kind, payloads in ((Read.MODE_WRITE, writes), (Read.MODE, {n: Read.MODE.payload(n) for n in nodes})):
+            frames = [(PARAM_ID, data) for data in payloads.values()]
+            frames.extend(continuing.values())
+            expected = dict.fromkeys(nodes, kind)
+            expected.update(dict.fromkeys(continuing, Read.STATUS))
+            replies = self.exchange(frames, expected, checkpoint, log)
+            for n in continuing:
+                fb = self.motors[n].feedback
+                if fb.status != 1:
+                    raise ZlgError(f"ID {n} 反馈退出使能：{fb.status_text}")
+            for n in nodes:
+                if kind is Read.MODE_WRITE and replies[n, kind] != writes[n]:
+                    raise ZlgError(f"ID {n} 模式写入应答不符")
+                if kind is Read.MODE and self.motors[n].mode != value:
+                    raise ZlgError(f"ID {n} 模式回读为 {self.motors[n].mode}，要求 {value}")
+
+    def disable_nodes(self, nodes, coherent, log):
+        """给每个目标投递失能，并用单独的状态回读确认。"""
+        verified, uncertain = set(), set()
+        queue_error = ""
+        try:
+            self.backend.clear_transmit_queue()
+        except (ZlgError, OSError) as error:
+            queue_error = str(error)
+            log(queue_error)
+        for node in sorted(nodes):
+            motor = self.motors[node]
+            try:
+                if not coherent or motor.mode not in (1, 2, 3, 4):
+                    mode = self.read(node, Read.MODE, uninterrupted, log)
+                    if mode not in (1, 2, 3, 4):
+                        raise ZlgError(f"ID {node} 模式寄存器值 {mode} 未识别")
+                acknowledged = True
+                try:
+                    self.exchange([(motor.command_id, b"\xff" * 7 + b"\xfd")], {node: Read.STATUS},
+                                  uninterrupted, log, disabling=True)
+                except (ZlgError, OSError) as error:
+                    acknowledged = False
+                    log(f"ID {node} 失能帧：{error}")
+                fb = self.read(node, Read.STATUS, uninterrupted, log)
+                if fb.status != 0:
+                    raise ZlgError(f"回读 {fb.status_text}")
+            except (ZlgError, OSError) as error:
+                uncertain.add(node)
+                log(f"ID {node} 失能未确认：{error}")
+            else:
+                if acknowledged:
+                    verified.add(node)
+                log(f"ID {node} 失能已回读 0")
+        return DisableResult(frozenset(nodes), frozenset(verified), frozenset(uncertain), queue_error)

@@ -9,15 +9,18 @@ from time import perf_counter
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from ArmController import ArmController, HoldParameters
+from FreeSpacePredictor import FreeSpaceParameters
 from Robot_UR import Robot_UR
 from ui_Form1 import Ui_Form1
 from ui_ZeroDialog import Ui_ZeroDialog
 from CanWorker import ALL, JOINTS, CanWorker, TuneLimits
+from CanProcess import CanProcessBus
 from PidTuneDialog import PidTuneDialog
 from DMMotor import LIMITS, MOTOR_MODELS
 from TeleopLog import TeleopLog
+from TeleopPublisher import TeleopPublisher
 from USBCANFD import USBCANFD
-from UdpClass import UdpClass, encode_master
+from UdpClass import UdpClass
 
 PROJECT_DIR = Path(__file__).resolve().parent
 CANFD_DEVICE_INDEX = 0  # ZLG 设备索引，从 0 起
@@ -30,27 +33,39 @@ UDP_LOCAL_PORT = 6005  # 主端监听端口
 UDP_REMOTE_IP = "192.168.3.14"  # 从端目的地址
 UDP_REMOTE_PORT = 5005  # 从端目的端口
 UDP_SEND_PERIOD_MS = 5  # 主端命令发送间隔，单位 ms
-UDP_TIMEOUT_S = 0.15  # 从端状态新鲜时限，单位 s；运动联调前按现场确认
+UDP_TIMEOUT_S = 1.0  # 从端状态新鲜时限，单位 s；运动联调前按现场确认
 TELEOP_LOG_ENABLED = True  # 遥操作时等从端开启跟随后自动记录 CSV，设为 False 时可用按钮手动记录
 QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
 POSE_DISPLAY_MS = 50  # 主从姿态图、从端关节表及 UDP 统计的显示间隔，单位 ms
 CAN_CYCLE_DELAY_S = 0  # 本轮 CAN FD 反馈收齐后到下一轮的等待时间，单位 s；0 表示立即继续
+CAN_COMMAND_MAX_AGE_S = 0.050  # 从控制所用六轴反馈起算的指令有效期，单位 s；超龄由 CAN 进程逐轴失能并回读
 TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
-PYTHON_SWITCH_INTERVAL_S = 0.00025  # Python 线程切换间隔，单位 s，缩短 CAN 回包就绪后等待界面线程的时间
+PYTHON_SWITCH_INTERVAL_S = 0.00025  # 主进程中控制、UDP、日志和界面线程的切换间隔，单位 s
 
 # 按 J1～J6 排列。把某一项改为 False，该轴 MIT 前馈力矩即为零，重启主窗生效。
 GRAVITY_AXES = (True, True, True, True, True, True)
 GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率，无单位
 
 FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW = True  # True 时从端 teleop_state 为 0 会关闭力反馈并禁用按钮
-# J1～J6 阻抗力反馈使用最短关节角差和实测关节角速度差，两者均取从端减主端。
-FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 20.0, 20.0, 20.0)  # 关节刚度，单位 N·m/rad
-FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 关节阻尼，单位 N·m·s/rad
-FORCE_FEEDBACK_VELOCITY_FILTER_S = 0.010  # 速度差一阶低通时间常数，单位 s，设为 0 则直接使用实测速度差
+# J1～J6 反馈先合成弹簧和阻尼，再按关节侧上限限幅。
+FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 20.0, 20.0, 10.0)  # 关节刚度，单位 N·m/rad
+FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 主端本地阻尼，力矩为负系数乘实测关节速度，单位 N·m·s/rad
+FORCE_FEEDBACK_VELOCITY_FILTER_S = 0.010  # 日志中速度差的一阶低通时间常数，单位 s；本地阻尼直接使用主端实测速度
 # J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼，不影响重力补偿或持位。
-FORCE_FEEDBACK_LIMIT_NM = (5, 5, 5, 2, 2, 2)
+FORCE_FEEDBACK_LIMIT_NM = (0, 0, 0, 0, 0, 2)
+
+# True 按下列权重补偿自由空间位置滞后；False 使用原始主从位置差。两种模式均使用主端本地阻尼。
+FORCE_FEEDBACK_PREDICTION_ENABLED = True
+FORCE_FEEDBACK_PREDICTION_WEIGHT = (1.0, 1.0, 1.0, 1.0, 1.0, 0.95)  # J1～J6 位置补偿权重，无量纲，范围 0～1；0 不补偿，1 全补偿
+# 以下采用 2026-11-24 无接触日志的速度差分辨识结果，依次对应 J1～J6。
+FREE_SPACE_SPEED_LIMIT_RAD_S = (0.734, 0.773, 0.755, 0.925, 0.889, 0.885)  # 预测速度上限，rad/s
+FREE_SPACE_ACCEL_POSITIVE_RAD_S2 = (6.134876, 3.580531, 3.924482, 10.721505, 10.734643, 9.488518)  # 正向起步幅值，rad/s²
+FREE_SPACE_ACCEL_NEGATIVE_RAD_S2 = (6.113493, 2.549822, 2.591227, 9.804715, 9.251685, 12.863736)  # 负向起步幅值，rad/s²
+FREE_SPACE_BRAKING_RAD_S2 = (8.559878, 6.437806, 6.325182, 11.855675, 11.749363, 22.444958)  # 双向制动幅值，rad/s²
+FREE_SPACE_DELAY_S = (0.057, 0.072, 0.074, 0.034, 0.034, 0.034)  # 含显式加减速模型的等效滞后，s
+FREE_SPACE_STEP_S = 0.0025  # 预测器固定积分步长，s；与离线回放保持一致
 
 # 双环参数按 J1～J6 排列。J1、J2 沿用 J3 负向 0.5° 阶跃的初调参数，J4、J5 沿用 J6 的初调参数。
 HOLD_POS_KP = (8.0, 8.0, 8.0, 5.5, 5.5, 5.5)  # 位置环比例，单位 1/s
@@ -117,14 +132,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.display_timer = QtCore.QTimer(self, interval=POSE_DISPLAY_MS)
         self.display_timer.timeout.connect(self.refresh_pose_display)
         self.display_timer.start()
-        self.log_mode = None
-        self.log_generation = None
-        self.auto_log_armed = True
-        self.teleop_timer = QtCore.QTimer(self, interval=UDP_SEND_PERIOD_MS)
-        self.teleop_timer.setTimerType(QtCore.Qt.PreciseTimer)
-        self.teleop_timer.timeout.connect(self.teleop_tick)
-        ui.publishMaster.toggled.connect(self.toggle_publish)
-        ui.logButton.clicked.connect(self.toggle_log)
         ui.udpButton.clicked.connect(self.toggle_udp)
         ui.syncButton.clicked.connect(lambda: self.command("sync", (self.udp,)))
         ui.followButton.clicked.connect(self.toggle_follow)
@@ -167,8 +174,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.teleop_log_message.connect(ui.frameLog.appendPlainText)
         self.teleop_log_error.connect(self.log_write_failed)
         self.teleop_log = TeleopLog(PROJECT_DIR / "logs", self.teleop_log_message.emit, self.teleop_log_error.emit)
+        self.publisher = TeleopPublisher(UDP_SEND_PERIOD_MS / 1000, QUERY_TIMEOUT_S, TELEOP_LOG_ENABLED,
+                                        self.latest_state, self.teleop_log, self.teleop_log_message.emit)
+        ui.publishMaster.toggled.connect(self.publisher.set_publishing)
+        ui.logButton.clicked.connect(self.publisher.set_recording)
         self.teleop_log.start()
-        QtWidgets.QApplication.instance().aboutToQuit.connect(self.teleop_log.close)
+        self.publisher.start()
+        QtWidgets.QApplication.instance().aboutToQuit.connect(self.publisher.close)
+
+    def latest_state(self):
+        worker = self.worker
+        return worker.latest_state() if worker else None
 
     def toggle_device(self):
         if self.worker is None:
@@ -182,11 +198,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self.udp = UdpClass((UDP_LOCAL_IP, UDP_LOCAL_PORT),
-                                (UDP_REMOTE_IP, self.ui.remotePort.value()), UDP_TIMEOUT_S)
+                                (UDP_REMOTE_IP, self.ui.remotePort.value()), UDP_TIMEOUT_S,
+                                command_history_s=UDP_TIMEOUT_S + max(FREE_SPACE_DELAY_S) + 2 * FREE_SPACE_STEP_S)
         except OSError as error:
             self.ui.udpStatus.setText(f"打开 UDP 失败：{error}")
             return
         self.udp.start()
+        self.publisher.set_link(self.udp)
         if self.worker is not None:
             self.worker.slave_link = self.udp
         self.ui.remotePort.setEnabled(False)
@@ -195,8 +213,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh()
 
     def close_udp(self):
-        if self.log_generation is not None:
-            self.stop_log("UDP 已断开，日志记录已停止")
+        self.publisher.set_link(None)
         self.ui.publishMaster.setChecked(False)
         if self.worker is not None:
             self.worker.slave_link = None
@@ -208,92 +225,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_pose_display()
         self.refresh_udp()
 
-    def toggle_publish(self, checked):
-        self.auto_log_armed = True
-        if not checked and self.log_mode == "auto":
-            self.set_log_mode(None)
-        else:
-            self.update_teleop_timer()
-
-    def update_teleop_timer(self):
-        needed = self.ui.publishMaster.isChecked() or self.log_mode is not None
-        if needed and not self.teleop_timer.isActive():
-            self.teleop_timer.start()
-        elif not needed:
-            self.teleop_timer.stop()
-
-    def toggle_log(self, checked):
-        if checked:
-            self.set_log_mode("manual", self.udp.fresh() if self.udp else None)
-        else:
-            self.stop_log()
-
-    def set_log_mode(self, mode, frame=None):
-        self.log_mode = mode
-        self.log_generation = frame.generation if frame is not None else None
-        if mode is None:
-            self.teleop_log.end_session()
-        self.ui.logButton.setChecked(mode is not None)
-        self.ui.logButton.setText("停止记录" if mode else "记录日志")
-        self.update_teleop_timer()
-
-    def stop_log(self, message=None):
-        # 发布持续开启时，人工停录或断流不应被下一拍的自动启动覆盖。
-        self.auto_log_armed = not self.ui.publishMaster.isChecked()
-        self.set_log_mode(None)
-        if message:
-            self.ui.frameLog.appendPlainText(message)
-
     def log_write_failed(self, first_sample, message):
         self.ui.frameLog.appendPlainText(message)
-        # 旧文件的异步报错不能停止刚刚开启的新记录。
-        if self.teleop_log.first_sample is first_sample:
-            self.stop_log()
-
-    @staticmethod
-    def master_ready(state):
-        return bool(state and state.opened and not state.faulted and not state.uncertain
-                    and state.coherent and perf_counter() - state.feedback_at <= QUERY_TIMEOUT_S
-                    and all(fb and fb.status in (0, 1) for _, fb in state.motors))
-
-    def publish_master(self, state):
-        if not self.ui.publishMaster.isChecked():
-            return None
-        if not (self.udp and self.master_ready(state)):
-            self.ui.publishMaster.setChecked(False)
-            return None
-        joints = [fb for _, fb in state.motors[:6]]
-        q, dq = Robot_UR.joint_state(joints)
-        packet = encode_master(q, dq, state.motors[6][1].position)
-        try:
-            self.udp.send(packet)
-        except OSError as error:
-            self.close_udp()
-            self.ui.udpStatus.setText(f"UDP 发送失败：{error}")
-            return None
-        return packet
-
-    def teleop_tick(self):
-        state = self.worker.state if self.worker else None
-        packet = self.publish_master(state)
-        link = self.udp
-        frame = link.fresh() if link else None
-        teleoperating = packet is not None and state.streaming and state.gravity
-        if self.log_generation is not None and (frame is None or frame.generation != self.log_generation):
-            self.stop_log("从端反馈断流，日志记录已停止")
-            return
-        slave_following = frame is not None and frame.teleop_state != 0
-        if not teleoperating or (self.log_mode == "auto" and not slave_following):
-            self.auto_log_armed = True
-            if self.log_mode == "auto":
-                self.set_log_mode(None)
-        elif TELEOP_LOG_ENABLED and self.auto_log_armed and slave_following:
-            self.auto_log_armed = False
-            if self.log_mode is None:
-                self.set_log_mode("auto", frame)
-        if self.log_mode is not None:
-            self.log_generation = frame.generation if frame is not None else None
-            self.teleop_log.record(state, packet, frame)
+        self.publisher.log_failed(first_sample)
 
     def toggle_follow(self):
         if self.worker.state.remote_action:
@@ -324,15 +258,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ui.udpStatus.setText(f"{status}  RX {link.rx}  TX {link.tx}  丢弃 {link.rejected}")
 
     def refresh_udp(self, state=None):
+        recording = self.publisher.log_mode is not None
+        self.ui.logButton.setChecked(recording)
+        self.ui.logButton.setText("停止记录" if recording else "记录日志")
+        publishing = self.publisher.publishing
+        if self.ui.publishMaster.isChecked() != publishing:
+            with QtCore.QSignalBlocker(self.ui.publishMaster):
+                self.ui.publishMaster.setChecked(publishing)
         link = self.udp
         if link and link.error:
             self.close_udp()
-            self.ui.udpStatus.setText(f"UDP 接收失败：{link.error}")
+            self.ui.udpStatus.setText(link.error)
             return
-        publish_ready = bool(link and self.master_ready(state))
-        self.ui.publishMaster.setEnabled(publish_ready)
-        if not publish_ready:
-            self.ui.publishMaster.setChecked(False)
+        publish_ready = bool(link and self.publisher.master_ready(state))
+        self.ui.publishMaster.setEnabled(publish_ready or publishing)
         active = bool(state and state.remote_action)
         ready = bool(state and link and link.fresh() and not state.tune_node and state.streaming
                      and state.hold_state == "空闲" and state.coherent and not state.busy
@@ -384,22 +323,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def open_device(self):
         try:
-            bus = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX, CANFD_CHANNEL_INDEX,
-                           QUERY_TIMEOUT_S, joint_torque_limits=MOTOR_OUTPUT_TORQUE_LIMIT_NM)
+            device = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX, CANFD_CHANNEL_INDEX,
+                              QUERY_TIMEOUT_S, joint_torque_limits=MOTOR_OUTPUT_TORQUE_LIMIT_NM)
+            bus = CanProcessBus(device, CAN_CYCLE_DELAY_S, TOOL_UPDATE_CYCLES, CAN_COMMAND_MAX_AGE_S)
             hold = HoldParameters(**hold_settings())
+            prediction = FreeSpaceParameters(FREE_SPACE_SPEED_LIMIT_RAD_S, FREE_SPACE_ACCEL_POSITIVE_RAD_S2,
+                                             FREE_SPACE_ACCEL_NEGATIVE_RAD_S2, FREE_SPACE_BRAKING_RAD_S2,
+                                             FREE_SPACE_DELAY_S, FREE_SPACE_STEP_S)
             controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold,
                                        [bus.motors[n] for n in JOINTS],
                                        force_stiffness=FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                                        force_damping=FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
                                        force_velocity_filter_s=FORCE_FEEDBACK_VELOCITY_FILTER_S,
-                                       force_limit=FORCE_FEEDBACK_LIMIT_NM)
+                                       force_limit=FORCE_FEEDBACK_LIMIT_NM,
+                                       force_prediction_enabled=FORCE_FEEDBACK_PREDICTION_ENABLED,
+                                       force_prediction_weight=FORCE_FEEDBACK_PREDICTION_WEIGHT,
+                                       free_space_parameters=prediction)
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
             return
         self.worker = CanWorker(
-            bus, self.ui.listenOnly.isChecked(), cycle_delay=CAN_CYCLE_DELAY_S, speed_limit=PV_SPEED_LIMIT_RAD_S,
+            bus, self.ui.listenOnly.isChecked(), speed_limit=PV_SPEED_LIMIT_RAD_S,
             pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
-            tool_update_cycles=TOOL_UPDATE_CYCLES,
             force_requires_slave_follow=FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW,
             controller=controller,
             tune_limits=self.tune_limits,
@@ -575,8 +520,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.close_device():
                 self.closing_window = True
         else:
-            if self.log_mode is not None:
-                self.set_log_mode(None)
             if self.udp:
                 self.close_udp()
             super().closeEvent(event)

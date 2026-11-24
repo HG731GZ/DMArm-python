@@ -1,4 +1,4 @@
-"""Windows CAN FD 周期线程使用的高分辨率定时器和命令唤醒事件。"""
+"""Windows CAN FD 收发与 UDP 发布各自使用的高分辨率定时器和唤醒事件。"""
 
 from contextlib import ExitStack
 import ctypes as C

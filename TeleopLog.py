@@ -29,6 +29,15 @@ MASTER_COLUMNS = (
     "master_can_cycle", "master_feedback_max_age_ms", "master_force_feedback_on",
     *joint_columns("master", "q_rad"), "master_udp_mode", "master_udp_grip_1", "master_udp_grip_2", "master_udp_grip_3",
     *joint_columns("master", "dq_rad_s"), *joint_columns("master", "filtered_velocity_error_rad_s"),
+    *joint_columns("master", "local_damping_nm"),
+    "master_prediction_enabled", "master_prediction_ready", "master_prediction_observation_age_ms",
+    "master_prediction_slave_received_unix_s",
+    *joint_columns("master", "prediction_weight"),
+    *joint_columns("master", "predicted_slave_q_rad"), *joint_columns("master", "predicted_slave_dq_rad_s"),
+    *joint_columns("master", "prediction_position_error_rad"),
+    *joint_columns("master", "prediction_filtered_velocity_error_rad_s"),
+    *joint_columns("master", "original_feedback_nm"), *joint_columns("master", "predicted_feedback_nm"),
+    *joint_columns("master", "weighted_feedback_nm"),
     *(f"master_{name}_motor_{field}" for name in MOTOR_NAMES for field in MOTOR_FIELDS), "master_gripper_force_n",
     *(f"master_j{n}_{field}" for n in JOINTS for field in ("mit_command_nm", "pv_command_rad")),
 )
@@ -62,6 +71,21 @@ class TeleopSample(NamedTuple):
         row = [state.cycles, age_ms, int(state.force_feedback), *self.master_motion(state.motors)]
         velocity_error = state.filtered_velocity_error if self.slave is not None else None
         row.extend(velocity_error if velocity_error is not None else (None,) * len(JOINTS))
+        row.extend(state.local_damping_torque if state.local_damping_torque is not None else (None,) * len(JOINTS))
+        prediction = state.prediction
+        row.extend((int(state.force_prediction_enabled), int(prediction is not None)))
+        if prediction is None:
+            row.extend((None, None))
+        else:
+            row.extend(((self.sampled_at - prediction.sampled_at) * 1000, prediction.slave_received_unix_s))
+        row.extend(state.force_prediction_weight if state.force_prediction_weight is not None else (None,) * len(JOINTS))
+        if prediction is None:
+            row.extend((None,) * (7 * len(JOINTS)))
+        else:
+            damping = state.local_damping_torque
+            row.extend((*prediction.q, *prediction.dq, *prediction.position_error, *prediction.velocity_error,
+                        *prediction.candidate_torque(prediction.raw_position_error, damping),
+                        *prediction.candidate_torque(prediction.position_error, damping), *prediction.weighted_torque))
         for _, fb in state.motors:
             if fb is None:
                 row.extend((None,) * len(MOTOR_FIELDS))

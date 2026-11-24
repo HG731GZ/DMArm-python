@@ -1,16 +1,15 @@
-"""CAN FD 独占线程，串行执行操作，向 Qt 发布完整状态快照。"""
+"""主端控制线程，计算最新指令并用 CAN 进程确认的反馈发布状态。"""
 
 from collections import deque
-from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from math import ceil, degrees, isfinite, radians
 from statistics import median
-import sys
 from threading import Condition, Thread
 from time import monotonic, perf_counter
 
-from ArmController import HOLD_FIELDS
-from DMMotor import MODE_REGISTER, PARAM_ID, Read
+from ArmController import HOLD_FIELDS, PredictionObservation
+from CanProcess import CanProcessLost
+from DMMotor import MODE_NAMES, Read
 from PidTuneSample import TunePoint
 from USBCANFD import OperationInterrupted
 from zlgcan import ZlgError
@@ -18,10 +17,6 @@ from zlgcan import ZlgError
 JOINTS = tuple(range(1, 7))
 ALL = (*JOINTS, 7)
 PRIORITY = {"stop": 1, "disable": 2, "disable_all": 3, "close": 4}
-
-
-def uninterrupted():
-    """单轴失能及其回读必须完成后才处理下一项操作。"""
 
 
 @dataclass(frozen=True)
@@ -64,9 +59,14 @@ class Snapshot:
     gravity: bool
     force_feedback: bool
     filtered_velocity_error: tuple[float, ...] | None
+    local_damping_torque: tuple[float, ...] | None
+    force_prediction_enabled: bool
+    force_prediction_weight: tuple[float, ...] | None
+    prediction: PredictionObservation | None
     hold_state: str
     hold_details: tuple
     joint_sample_at: float
+    command_until: float
     commands: tuple
     tracking: bool
     coherent: bool
@@ -89,12 +89,9 @@ class Snapshot:
 
 
 class CanWorker(Thread):
-    def __init__(self, bus, listen_only, cycle_delay, speed_limit, pose_period, *, queued_cycles,
-                 tool_update_cycles, force_requires_slave_follow=True, controller=None, tune_limits=None, slave_link=None):
-        super().__init__(name="DMArm-CAN-FD")
-        if type(tool_update_cycles) is not int or tool_update_cycles < 1:
-            raise ValueError("夹钳发送间隔必须为正整数（轮）")
-        self.tool_update_cycles = tool_update_cycles
+    def __init__(self, bus, listen_only, speed_limit, pose_period, *, queued_cycles,
+                 force_requires_slave_follow=True, controller=None, tune_limits=None, slave_link=None):
+        super().__init__(name="DMArm-Control")
         self.bus = bus
         self.controller = controller
         self.tune_limits = tune_limits
@@ -110,6 +107,7 @@ class CanWorker(Thread):
         self.remote_frame = None
         self.slave_link = slave_link
         self.velocity_stream = None
+        self.prediction_stream = None
         self.force_requires_slave_follow = force_requires_slave_follow
         self.clear_force_feedback()
         self.force_output_pending = False
@@ -120,13 +118,9 @@ class CanWorker(Thread):
         self.listen_only = listen_only
         self.tracking = False
         self.pose_period = pose_period
-        if not isfinite(cycle_delay) or cycle_delay < 0:
-            raise ValueError("CAN FD 轮间等待时间必须为非负有限秒数")
-        self.cycle_delay = cycle_delay
         self.queued_cycles = queued_cycles
         self.speed_limit = speed_limit
         self.cv = Condition()
-        self.waiting_timer = None
         self.pending = None
         self.current = "open"
         self.events = deque(maxlen=250)
@@ -137,10 +131,7 @@ class CanWorker(Thread):
         self.streaming = False
         self.coherent = True
         self.targets = {}
-        self.cycles = 0
-        self.run_cycles = 0
-        self.hz = 0.0
-        self.next_cycle = self.next_monitor = 0.0
+        self.next_monitor = 0.0
         self.message = "正在打开设备"
         self.done = False
         self.faulted = False
@@ -155,19 +146,25 @@ class CanWorker(Thread):
                 self.tune_point = None
             # 滤波器会原地更新数组，发布快照时复制六轴数值供异步记录。
             velocity_error = self.controller.filtered_velocity_error if self.controller is not None else None
+            local_damping = self.controller.local_damping_torque if self.controller is not None else None
             self.state = Snapshot(
                 self.bus.started, bool(self.current or self.pending), self.first_read,
                 frozenset(self.verified), frozenset(self.owned), frozenset(self.uncertain),
                 self.streaming, bool(self.controller and self.controller.gravity_on),
                 self.force_link is not None,
                 tuple(velocity_error) if velocity_error is not None else None,
+                tuple(local_damping) if local_damping is not None else None,
+                bool(self.controller and self.controller.force_prediction_enabled),
+                tuple(self.controller.force_prediction_weight) if self.controller else None,
+                self.controller.prediction_observation if self.controller else None,
                 self.controller.hold_state if self.controller else "空闲",
                 self.controller.details if self.controller else (),
                 self.joint_sample.oldest_at if self.joint_sample else 0.0,
+                self.bus.confirmed.expires_at if self.bus.applied else 0.0,
                 tuple(self.commands.get(n) for n in JOINTS), self.tracking, self.coherent, self.faulted,
                 tuple((m.mode_text, m.feedback) for m in self.bus.motors.values()),
-                self.message, self.bus.tx, self.bus.rx, self.bus.failed, self.cycles,
-                self.hz if self.streaming else 0.0,
+                self.message, self.bus.tx, self.bus.rx, self.bus.failed, self.bus.cycles,
+                self.bus.hz if self.streaming else 0.0,
                 min(m.feedback_at for m in self.bus.motors.values()), self.remote_action,
                 self.tune_node, self.tune_phase, self.tune_origin, self.tune_locks,
                 self.tune_parameters, self.tune_revision,
@@ -185,6 +182,24 @@ class CanWorker(Thread):
                 points = ()
             state = replace(self.state, busy=bool(self.current or self.pending))
         return state, messages, tuple(points)
+
+    def latest_state(self):
+        state = self.state
+        if not state.streaming or not state.command_until:
+            return state
+        latest = self.bus.latest_motion(state.cycles)
+        if latest is not None:
+            command, cycles, hz, tx, rx, failed, records = latest
+            motors = tuple((MODE_NAMES.get(mode, "—"), fb) for mode, fb, _ in records)
+            if all(a[0] == b[0] for a, b in zip(state.motors, motors)):
+                commands = list(state.commands)
+                for node, mode, (_, data) in command.targets:
+                    if node in JOINTS:
+                        commands[node - 1] = self.bus.motors[node].joint_command_value(mode, data)
+                return replace(state, cycles=cycles, hz=hz, tx=tx, rx=rx, failed=failed, motors=motors,
+                               commands=tuple(commands), feedback_at=min(r[2] for r in records),
+                               joint_sample_at=min(r[2] for r in records[:6]), command_until=command.expires_at)
+        return state if perf_counter() < state.command_until else None
 
     def log(self, message):
         with self.cv:
@@ -204,10 +219,9 @@ class CanWorker(Thread):
             if self.current and priority <= PRIORITY.get(self.current, 0):
                 return False
             self.pending = (action, (self.joint_sample,) if action == "hold_on" else tuple(nodes))
-            if self.waiting_timer is None:
-                self.cv.notify()
-            else:
-                self.waiting_timer.wake()
+            if priority:
+                self.bus.interrupt()
+            self.cv.notify()
             return True
 
     def can_close(self):
@@ -233,7 +247,7 @@ class CanWorker(Thread):
     def special(self, node, code, check=None):
         data = bytes([0xFF] * 7 + [code])
         self.bus.exchange([(self.bus.motors[node].command_id, data)], {node: Read.STATUS},
-                          check or self.checkpoint, self.log, disabling=(code == 0xFD))
+                          check or self.checkpoint, self.log)
 
     def require_off(self, node):
         fb = self.status(node)
@@ -251,43 +265,20 @@ class CanWorker(Thread):
         self.commands.clear()
         if self.controller:
             self.controller.gravity_on = False
-        clearing_error = None
-        try:
-            self.bus.backend.clear_transmit_queue()
-        except (ZlgError, OSError) as error:
-            clearing_error = error
-            self.log(str(error))
-        for node in sorted(nodes):
-            self.verified.discard(node)
-            try:
-                if self.bus.motors[node].mode not in (1, 2, 3, 4) or not self.coherent:
-                    self.mode(node, uninterrupted)
-                acknowledged = True
-                try:
-                    self.special(node, 0xFD, uninterrupted)
-                except (ZlgError, OSError) as error:
-                    acknowledged = False
-                    self.log(f"ID {node} 失能帧：{error}")
-                fb = self.status(node, uninterrupted)
-                if fb.status != 0:
-                    raise ZlgError(f"回读 {fb.status_text}")
-            except (ZlgError, OSError) as error:
-                self.uncertain.add(node)
-                self.log(f"ID {node} 失能未确认：{error}")
-            else:
-                self.owned.discard(node)
-                self.uncertain.discard(node)
-                if acknowledged:
-                    self.verified.add(node)
-                self.log(f"ID {node} 失能已回读 0")
+        result = self.bus.request("disable", (set(nodes), self.coherent), self.log)
+        self.verified.difference_update(result.nodes)
+        self.verified.update(result.verified)
+        self.owned.difference_update(result.nodes - result.uncertain)
+        self.uncertain.difference_update(result.nodes)
+        self.uncertain.update(result.uncertain)
         self.finish_hold()
         self.clear_tuning()
         if self.uncertain:
             self.report(f"失能未确认 {sorted(self.uncertain)}；请支撑并物理停机")
             return False
         self.force_output_pending = False
-        if clearing_error:
-            self.report(f"失能已回读；清发送队列失败：{clearing_error}")
+        if result.queue_error:
+            self.report(f"失能已回读；清发送队列失败：{result.queue_error}")
             self.faulted = True
             return False
         self.report(f"失能已确认 {sorted(nodes)}")
@@ -318,33 +309,14 @@ class CanWorker(Thread):
         self.write_modes(value, nodes)
         self.report(f"节点 {list(nodes)} 已回读 {self.bus.motors[nodes[0]].mode_text}")
 
-    def exchange_mode_register(self, payloads, kind, continuing):
-        """换模轴收寄存器应答，同批的其余轴继续控制并收使能反馈。"""
-        frames = [(PARAM_ID, data) for data in payloads.values()]
-        frames.extend(continuing.values())
-        expected = dict.fromkeys(payloads, kind)
-        expected.update(dict.fromkeys(continuing, Read.STATUS))
-        replies = self.bus.exchange(frames, expected, self.checkpoint, self.log)
-        self.check_enabled_feedback(continuing)
-        return replies
-
     def write_modes(self, value, nodes):
         self.clear_force_feedback()
         self.invalidate_sample()
         # 寄存器写入与回读是额外批次；分频发送的夹钳只在到期的控制轮中加入。
         continuing = {n: target for n, target in self.targets.items()
-                      if self.streaming and n not in nodes and (n != 7 or self.tool_update_cycles == 1)}
-        writes = {n: bytes((n, 0, 0x55, MODE_REGISTER, value, 0, 0, 0)) for n in nodes}
+                      if self.streaming and n not in nodes and (n != 7 or self.bus.tool_update_cycles == 1)}
         self.coherent = False
-        replies = self.exchange_mode_register(writes, Read.MODE_WRITE, continuing)
-        for node, data in writes.items():
-            if replies[node, Read.MODE_WRITE] != data:
-                raise ZlgError(f"ID {node} 模式写入应答不符")
-        self.exchange_mode_register({n: Read.MODE.payload(n) for n in nodes}, Read.MODE, continuing)
-        for node in nodes:
-            actual = self.bus.motors[node].mode
-            if actual != value:
-                raise ZlgError(f"ID {node} 模式回读为 {actual}，要求 {value}")
+        self.bus.request("modes", (value, tuple(nodes), continuing), self.log)
         self.coherent = True
 
     def start_cycles(self):
@@ -361,16 +333,8 @@ class CanWorker(Thread):
                     self.set_positions({node: fb.position})
                 else:
                     self.clear_motor_command(node)
-        if self.queued_cycles:
-            self.bus.backend.enable_transmit_queue()
-        self.expected_feedback = dict.fromkeys(sorted(self.targets), Read.STATUS)
+        self.bus.request("start", (self.queued_cycles, tuple(self.targets)))
         self.joint_feedback = {n: Read.STATUS for n in JOINTS if n in self.targets}
-        # 毫秒级发送调度和频率统计共用高分辨率单调时钟。
-        self.next_cycle = perf_counter()
-        self.rate_started_at = self.next_cycle
-        self.rate_start_cycles = self.cycles
-        self.hz = 0.0
-        self.run_cycles = 0
         self.streaming = True
         mode = "队列发送" if self.queued_cycles else "直接批发"
         self.report(f"周期发送 {sorted(self.targets)} · {mode}")
@@ -536,6 +500,9 @@ class CanWorker(Thread):
                 or any(self.bus.motors[n].mode != 1 for n in JOINTS)):
             self.report("持位需要可发送通道及六轴 MIT 使能周期，且已结束遥操作")
             return
+        if clicked is not None and self.bus.applied != self.bus.sequence:
+            # 位置取点击时的样本，积分器从已实际下发并确认的末批力矩接管。
+            self.cycle()
         sample = self.joint_sample
         if (clicked is None or sample is None or perf_counter() - clicked.oldest_at > ctl.hold.max_dt
                 or any(f.status != 1 for f in clicked.feedback + sample.feedback)):
@@ -575,7 +542,7 @@ class CanWorker(Thread):
                 if times:
                     exchange_mean = sum(t for _, t, has_tool in self.periods if has_tool == tool) * 1000 / len(times)
                     gap_mean = sum(times) / len(times) - exchange_mean
-                    self.log(f"{label}周期 {len(times)} 轮，中位 {median(times):.3f} / "
+                    self.log(f"{label}周期采样 {len(times)} 轮，中位 {median(times):.3f} / "
                              f"P95 {times[ceil(len(times)*0.95)-1]:.3f} / 最大 {times[-1]:.3f} ms，"
                              f"平均整批收发 {exchange_mean:.3f} / 收齐至下批开始 {gap_mean:.3f} ms")
             self.previous_batch = None
@@ -617,13 +584,20 @@ class CanWorker(Thread):
                 matched = False
         return ctl.hold_state == "退出中" and matched
 
-    def confirm_batch(self, expected):
+    def confirm_batch(self, expected, targets):
         self.check_enabled_feedback(expected)
         for n in self.joint_feedback:
             motor = self.bus.motors[n]
+            self.commands[n] = motor.joint_command_value(motor.mode, targets[n][1])
             if motor.mode == 1:
-                code = motor.payload_torque_code(self.targets[n][1])
-                self.last_torque[n] = self.commands[n] = motor.torque_value(code)
+                self.last_torque[n] = self.commands[n]
+        self.update_joint_sample()
+
+    def confirm_cycle(self, expected):
+        targets = {n: frame for n, _, frame in self.bus.confirmed.targets}
+        self.confirm_batch(expected, targets)
+
+    def update_joint_sample(self):
         if len(self.joint_feedback) == len(JOINTS):
             sample = JointSample(tuple(self.bus.motors[n].feedback for n in JOINTS),
                                  tuple(self.bus.motors[n].feedback_at for n in JOINTS))
@@ -633,6 +607,9 @@ class CanWorker(Thread):
     def cycle(self):
         ctl = self.controller
         motors = self.bus.motors
+        if self.bus.refresh_latest():
+            self.confirm_cycle(self.joint_feedback)
+        sampled_at = min(motors[n].feedback_at for n in (self.joint_feedback or self.targets))
         if self.remote_action:
             self.update_remote()
         link = self.slave_link
@@ -654,57 +631,47 @@ class CanWorker(Thread):
                 if motor.mode == 1:
                     torque = max(-motor.output_limit, min(motor.output_limit, torques[node - 1]))
                     self.targets[node] = motor.command_id, motor.encode_mit(0, 0, torque, 0, 0)
-        expected = self.joint_feedback
-        if (self.run_cycles + 1) % self.tool_update_cycles == 0:
-            expected = self.expected_feedback
-        if expected:
-            frames = [self.targets[n] for n in expected]
-            check = self.hold_checkpoint if holding else self.checkpoint
-            sent_at = perf_counter()
-            # 收齐无反馈分量的新指令应答前，停发仍需撤去可能已经下发的反馈力矩。
-            if force_torque is not None:
-                self.force_output_pending = True
-            self.bus.exchange(frames, expected, check, queued=self.queued_cycles)
-            if holding:
-                exchanged_at = perf_counter()
-                check()
-            self.confirm_batch(expected)
-            self.force_output_pending = force_torque is not None
-            if holding:
-                has_tool = 7 in expected
-                if has_tool not in self.reported_batches:
-                    ids = "、".join(f"0x{can_id:03X}" for can_id, _ in frames)
-                    method = "队列发送" if self.queued_cycles else "直接批发"
-                    self.log(f"{method}控制批次 [{ids}]，已确认节点 {list(expected)}")
-                    self.reported_batches.add(has_tool)
-                if ctl.hold_state == "持位" and not self.tune_event:
-                    if self.previous_batch is not None:
-                        previous_at, previous_exchange, had_tool = self.previous_batch
-                        self.periods.append((sent_at - previous_at, previous_exchange, had_tool))
-                    self.previous_batch = sent_at, exchanged_at - sent_at, has_tool
-                else:
-                    self.previous_batch = None
-                self.max_hold_dt = max(self.max_hold_dt, self.joint_sample.sampled_at - self.last_hold_sample_at)
-                for n in JOINTS[ctl.axes]:
-                    i = n - 1
-                    axis = ctl.details[i]
-                    self.pid_peaks[i] = max(self.pid_peaks[i], abs(axis.pid))
-                    self.command_peaks[i] = max(self.command_peaks[i], abs(self.last_torque[i + 1]))
-                if released:
-                    self.finish_hold()
-                    self.report("已退出持位，继续重力补偿" + ("及力反馈" if self.force_link else ""))
-            if self.tune_node:
-                self.advance_tuning(sent_at, holding)
-        self.cycles += 1
-        self.run_cycles += 1
-        now = perf_counter()
-        # 用最近一个完整统计窗口的收发轮数显示 Hz，切换补偿前的轮数只影响所在窗口。
-        elapsed = now - self.rate_started_at
-        if elapsed >= 1.0:
-            self.hz = (self.cycles - self.rate_start_cycles) / elapsed
-            self.rate_started_at = now
-            self.rate_start_cycles = self.cycles
-        self.next_cycle = now + self.cycle_delay
+        expires_at = sampled_at + self.bus.command_max_age
+        if holding or force_torque is not None:
+            expires_at = min(expires_at, sampled_at + ctl.hold.max_dt)
+        remote = frame if force_torque is not None else self.remote_frame
+        if remote is not None and (force_torque is not None or self.remote_action == "follow"):
+            remote_link = self.force_link if force_torque is not None else self.remote_link
+            expires_at = min(expires_at, perf_counter() + remote_link.timeout - (monotonic() - remote.received))
+        self.checkpoint()
+        wait_applied = bool(holding or self.tune_node or self.current or
+                            (self.force_output_pending and force_torque is None))
+        if force_torque is not None:
+            self.force_output_pending = True
+        sent_at, has_tool, previous = self.bus.cycle(self.targets, sampled_at, expires_at, wait_applied)
+        expected = self.targets if has_tool else self.joint_feedback
+        self.confirm_cycle(expected)
+        self.force_output_pending = force_torque is not None
+        if holding:
+            self.hold_checkpoint()
+            if has_tool not in self.reported_batches:
+                ids = "、".join(f"0x{self.targets[n][0]:03X}" for n in expected)
+                method = "队列发送" if self.queued_cycles else "直接批发"
+                self.log(f"{method}控制批次 [{ids}]，已确认节点 {list(expected)}")
+                self.reported_batches.add(has_tool)
+            if ctl.hold_state == "持位" and not self.tune_event:
+                if self.previous_batch is not None and previous is not None:
+                    previous_at, duration, had_tool = previous
+                    self.periods.append((sent_at - previous_at, duration, had_tool))
+                self.previous_batch = sent_at
+            else:
+                self.previous_batch = None
+            self.max_hold_dt = max(self.max_hold_dt, self.joint_sample.sampled_at - self.last_hold_sample_at)
+            for n in JOINTS[ctl.axes]:
+                i = n - 1
+                axis = ctl.details[i]
+                self.pid_peaks[i] = max(self.pid_peaks[i], abs(axis.pid))
+                self.command_peaks[i] = max(self.command_peaks[i], abs(self.last_torque[i + 1]))
+            if released:
+                self.finish_hold()
+                self.report("已退出持位，继续重力补偿" + ("及力反馈" if self.force_link else ""))
+        if self.tune_node:
+            self.advance_tuning(sent_at, holding)
 
     def check_enabled_feedback(self, nodes):
         for node in nodes:
@@ -719,13 +686,15 @@ class CanWorker(Thread):
         if self.remote_action:
             self.hold_remote("停止发送")
             self.cycle()
-        self.bus.backend.clear_transmit_queue()
-        if self.tune_node or (self.controller and self.controller.hold_state != "空闲"):
+        holding = self.tune_node or (self.controller and self.controller.hold_state != "空闲")
+        if holding:
             for node in JOINTS:
                 if self.bus.motors[node].mode == 1:
                     self.clear_motor_command(node)
-            self.bus.exchange([self.targets[n] for n in JOINTS], self.joint_feedback, self.checkpoint)
-            self.confirm_batch(self.joint_feedback)
+        final = {n: self.targets[n] for n in JOINTS} if holding else {}
+        self.bus.request("stop", (final,))
+        if holding:
+            self.confirm_batch(self.joint_feedback, final)
             self.force_output_pending = False
             self.finish_hold()
             self.clear_tuning()
@@ -809,6 +778,7 @@ class CanWorker(Thread):
 
     def reset_velocity_filter(self):
         self.velocity_stream = None
+        self.prediction_stream = None
         if self.controller is not None:
             self.controller.reset_velocity_filter()
 
@@ -822,6 +792,17 @@ class CanWorker(Thread):
             self.controller.reset_velocity_filter()
             self.velocity_stream = stream
         self.controller.update_velocity_error(sample.feedback, frame.dq, sample.sampled_at, max_dt)
+        if self.controller.force_prediction_enabled:
+            session, commands = link.history
+            if not self.slave_allows_force_feedback(frame) or not commands or frame.received < commands[0].sent_at:
+                self.controller.reset_prediction()
+                self.prediction_stream = None
+                return
+            prediction_stream = (link, frame.generation, session)
+            if prediction_stream != self.prediction_stream:
+                self.controller.reset_prediction()
+                self.prediction_stream = prediction_stream
+            self.controller.update_prediction(sample.feedback, frame, commands, sample.sampled_at, max_dt)
 
     def observe_idle_velocities(self):
         """只听、读取状态及失能姿态采样时，用已有回包更新速度差，不额外发送查询。"""
@@ -845,19 +826,20 @@ class CanWorker(Thread):
                 and not state.uncertain and not state.faulted and not state.tune_node
                 and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= self.controller.hold.max_dt
                 and any(self.controller.force_limit)
+                and (not self.controller.force_prediction_enabled or state.prediction is not None)
                 and all(n in state.owned and mode == "MIT" for n, (mode, _) in zip(JOINTS, state.motors)))
 
     def start_force_feedback(self, link):
         frame = link.fresh() if link else None
         if frame is None or not self.can_reflect_force(self.state):
-            self.report("阻抗力反馈需要六轴 MIT 使能、重力补偿、新鲜的主从关节反馈，且至少一轴力反馈上限大于 0")
+            self.report("力反馈需要六轴 MIT 使能、重力补偿及新鲜主从反馈；预测补偿还需要主端持续发布并完成初始化")
             return
         if not self.slave_allows_force_feedback(frame):
             self.report("从端未开启跟随，无法开启阻抗力反馈")
             return
         self.force_link = link
         self.force_generation = frame.generation
-        self.report("关节阻抗力反馈已开启")
+        self.report("自由空间预测补偿力反馈已开启" if self.controller.force_prediction_enabled else "关节阻抗力反馈已开启")
 
     def force_feedback_torque(self, link, frame):
         """力反馈开启时使用本轮观测值输出阻抗力矩。"""
@@ -875,6 +857,10 @@ class CanWorker(Thread):
         if sample is None or perf_counter() - sample.oldest_at > self.controller.hold.max_dt:
             self.clear_force_feedback()
             self.report("主端六轴反馈缺失或已过期，阻抗力反馈已关闭")
+            return None
+        if self.controller.force_prediction_enabled and self.controller.prediction_observation is None:
+            self.clear_force_feedback()
+            self.report("主端发布已结束或预测会话未就绪，力反馈已关闭")
             return None
         return self.controller.impedance_torque(sample.feedback, frame.q)
 
@@ -944,7 +930,7 @@ class CanWorker(Thread):
             except (ZlgError, OSError) as error:
                 self.faulted = True
                 self.report(f"关闭设备失败：{error}")
-                self.done = self.bus.backend is None
+                self.done = self.bus.process is None
                 return
             self.finish_hold()
             self.invalidate_sample()
@@ -1057,6 +1043,7 @@ class CanWorker(Thread):
                 if unsupported:
                     self.report(f"节点 {unsupported} 的当前模式不支持周期发送")
                 else:
+                    self.bus.request("adopt", (enabled,))
                     self.owned.update(enabled)
                     self.report("六轴和夹钳均已使能，可直接开始发送")
             else:
@@ -1086,6 +1073,12 @@ class CanWorker(Thread):
                 raise ZlgError(f"ID {node} 回读 {fb.status_text}，结束姿态读取")
         self.next_monitor = monotonic() + self.pose_period
 
+    def connection_lost(self, error):
+        self.uncertain.update(self.owned)
+        self.streaming = self.tracking = False
+        self.faulted = True
+        self.report(str(error))
+
     def run(self):
         try:
             self.report(self.bus.open(self.listen_only))
@@ -1094,44 +1087,45 @@ class CanWorker(Thread):
                 if not self.listen_only and not self.pending:
                     self.pending = ("read", ())
                 self.publish()
-            with ExitStack() as resources:
-                timer = None
-                if sys.platform == "win32" and not self.listen_only and self.cycle_delay > 0:
-                    from WinCycleTimer import WinCycleTimer
-                    timer = WinCycleTimer()
-                    resources.callback(timer.close)
-                self.loop(timer)
+            self.loop()
+        except CanProcessLost as error:
+            self.connection_lost(error)
         except (ZlgError, OSError, AttributeError) as error:
             self.report(f"设备错误：{error}")
         finally:
-            if self.bus.backend is not None:
-                try:
-                    if self.owned and not self.done:
-                        self.disable(self.owned.copy())
-                finally:
+            try:
+                if self.bus.process is not None and self.owned and not self.done:
+                    self.disable(self.owned.copy())
+            except CanProcessLost as error:
+                self.connection_lost(error)
+            finally:
+                if self.bus.process is not None:
                     try:
                         self.bus.close()
+                    except CanProcessLost as error:
+                        self.connection_lost(error)
                     except (ZlgError, OSError) as error:
                         self.report(str(error))
             self.done = True
             self.current = None
             self.publish()
 
-    def loop(self, timer):
+    def loop(self):
         while not self.done:
             with self.cv:
                 command = self.pending
                 self.pending = None
                 self.current = command[0] if command else None
+                self.bus.generation = self.bus.epoch.value
             try:
                 if command:
                     self.dispatch(*command)
                 elif self.tracking and monotonic() >= self.next_monitor:
                     self.sample_pose()
-                elif self.streaming and perf_counter() >= self.next_cycle:
+                elif self.streaming:
                     self.cycle()
                 elif not self.faulted:
-                    self.bus.receive(log=None if self.streaming else self.log)
+                    self.bus.request("receive", log=self.log)
             except OperationInterrupted:
                 self.log("普通操作已中断，处理停止请求")
                 # 部分使能或换模未核对时先逐轴失能；模式已知时由待处理的停止操作接管。
@@ -1156,16 +1150,5 @@ class CanWorker(Thread):
             with self.cv:
                 self.current = None
                 self.publish()
-                delay = self.next_cycle - perf_counter() if self.streaming else 0.005
-                if delay <= 0 or self.pending or self.done:
-                    continue
-                if not self.streaming or timer is None:
-                    self.cv.wait(delay)
-                    continue
-                # 在锁内登记等待者，释放锁后即使尚未进入内核等待也能收到命令事件。
-                self.waiting_timer = timer
-            try:
-                timer.wait_until(self.next_cycle)
-            finally:
-                with self.cv:
-                    self.waiting_timer = None
+                if not self.streaming and not self.pending and not self.done:
+                    self.cv.wait(0.005)
