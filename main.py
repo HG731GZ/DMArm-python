@@ -50,15 +50,15 @@ GRAVITY_GAIN = (1.1, 1.1, 1.1, 1.2, 1.1, 1.1)  # 原 C# 电机侧重力矩倍率
 
 FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW = True  # True 时从端 teleop_state 为 0 会关闭力反馈并禁用按钮
 # J1～J6 反馈先合成弹簧和阻尼，再按关节侧上限限幅。
-FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 20.0, 20.0, 10.0)  # 关节刚度，单位 N·m/rad
+FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 10.0, 10.0, 10.0)  # 关节刚度，单位 N·m/rad
 FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 主端本地阻尼，力矩为负系数乘实测关节速度，单位 N·m·s/rad
 FORCE_FEEDBACK_VELOCITY_FILTER_S = 0.010  # 日志中速度差的一阶低通时间常数，单位 s；本地阻尼直接使用主端实测速度
 # J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼，不影响重力补偿或持位。
-FORCE_FEEDBACK_LIMIT_NM = (0, 0, 0, 0, 0, 2)
+FORCE_FEEDBACK_LIMIT_NM = (0, 0, 0, 2, 2, 0)
 
-# True 按下列权重补偿自由空间位置滞后；False 使用原始主从位置差。两种模式均使用主端本地阻尼。
+# True 时预测按权重抵消原始主从弹簧，最多抵消到零。False 时使用原始弹簧。两种模式均另加主端本地阻尼。
 FORCE_FEEDBACK_PREDICTION_ENABLED = True
-FORCE_FEEDBACK_PREDICTION_WEIGHT = (1.0, 1.0, 1.0, 1.0, 1.0, 0.95)  # J1～J6 位置补偿权重，无量纲，范围 0～1；0 不补偿，1 全补偿
+FORCE_FEEDBACK_PREDICTION_WEIGHT = (1.0, 1.0, 1.0, 0.95, 0.95, 0.95)  # J1～J6 位置补偿权重，无量纲，范围 0～1；0 不补偿，1 全补偿
 # 以下采用 2026-11-24 无接触日志的速度差分辨识结果，依次对应 J1～J6。
 FREE_SPACE_SPEED_LIMIT_RAD_S = (0.734, 0.773, 0.755, 0.925, 0.889, 0.885)  # 预测速度上限，rad/s
 FREE_SPACE_ACCEL_POSITIVE_RAD_S2 = (6.134876, 3.580531, 3.924482, 10.721505, 10.734643, 9.488518)  # 正向起步幅值，rad/s²

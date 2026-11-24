@@ -71,6 +71,7 @@ class PredictionObservation(NamedTuple):
     position_error: tuple
     velocity_error: tuple
     raw_position_error: tuple
+    weighted_position_error: tuple
     stiffness_limits: tuple
     weighted_torque: tuple
 
@@ -156,14 +157,17 @@ class ArmController:
         self.last_prediction_sample_at = sampled_at
         error = Robot_UR.wrap(np.asarray(frame.q) - self.predicted_q)
         raw_error = Robot_UR.wrap(np.asarray(frame.q) - Robot_UR.motor2dh([f.position for f in feedback]))
-        # 在限幅前混合两种位置误差，权重不缩放本地阻尼。
         weight = self.force_prediction_weight
-        weighted = self.force_stiffness * ((1 - weight) * raw_error + weight * error) + self.local_damping_torque
+        weighted_error = (1 - weight) * raw_error + weight * error
+        raw_spring = self.force_stiffness * raw_error
+        # 预测最多抵消原始主从弹簧，按轴约束后再叠加本地阻尼。
+        spring = np.clip(self.force_stiffness * weighted_error,
+                         np.minimum(0.0, raw_spring), np.maximum(0.0, raw_spring))
+        joint_torque = np.clip(spring + self.local_damping_torque, -self.force_limit, self.force_limit)
         self.prediction_observation = PredictionObservation(
             sampled_at, frame.wall_time, tuple(Robot_UR.wrap(self.predicted_q)), tuple(self.predicted_dq),
             tuple(error), tuple(self.prediction_velocity_error),
-            tuple(raw_error), self.stiffness_limits,
-            tuple(np.clip(weighted, -self.force_limit, self.force_limit)),
+            tuple(raw_error), tuple(weighted_error), self.stiffness_limits, tuple(joint_torque),
         )
 
     def update_velocity_error(self, feedback, slave_dq, sampled_at, max_dt):
