@@ -40,7 +40,7 @@ POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
 POSE_DISPLAY_MS = 50  # 主从姿态图、从端关节表及 UDP 统计的显示间隔，单位 ms
 CAN_CYCLE_DELAY_S = 0  # 本轮 CAN FD 反馈收齐后到下一轮的等待时间，单位 s；0 表示立即继续
-CAN_COMMAND_MAX_AGE_S = 0.050  # 从控制所用六轴反馈起算的指令有效期，单位 s；超龄由 CAN 进程逐轴失能并回读
+CAN_COMMAND_MAX_AGE_S = 0.50  # 从控制所用六轴反馈起算的指令有效期，单位 s；超龄由 CAN 进程逐轴失能并回读
 TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
 PYTHON_SWITCH_INTERVAL_S = 0.00025  # 主进程中控制、UDP、日志和界面线程的切换间隔，单位 s
 
