@@ -27,7 +27,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
 </string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="mainLayout">
+   <layout class="QVBoxLayout" name="mainLayout" stretch="0,1,0,0">
     <item>
      <widget class="QGroupBox" name="deviceGroup">
       <property name="title">
@@ -80,7 +80,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
      </widget>
     </item>
     <item>
-     <layout class="QGridLayout" name="panelsLayout" columnstretch="3,2">
+     <layout class="QGridLayout" name="panelsLayout" rowstretch="0,1,1" columnstretch="3,2">
       <item row="0" column="0">
        <widget class="QGroupBox" name="feedbackGroup">
         <property name="title">
@@ -1075,17 +1075,61 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
       <item row="1" column="1" rowspan="2">
        <widget class="QGroupBox" name="poseGroup">
         <property name="title">
-         <string>主从姿态</string>
+         <string>主从实体姿态</string>
         </property>
-        <layout class="QVBoxLayout" name="poseGroupLayout">
+        <layout class="QVBoxLayout" name="poseGroupLayout" stretch="0,1,0">
          <item>
-          <widget class="ArmView" name="armView" />
+          <layout class="QHBoxLayout" name="poseLegendLayout">
+           <item>
+            <widget class="QLabel" name="masterLegend">
+             <property name="enabled"><bool>false</bool></property>
+             <property name="styleSheet"><string>QLabel:enabled { color: #206b89; }</string></property>
+             <property name="text"><string>● 主端实心</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="slaveLegend">
+             <property name="enabled"><bool>false</bool></property>
+             <property name="styleSheet"><string>QLabel:enabled { color: #aa5a16; }</string></property>
+             <property name="text"><string>◐ 从端半透明</string></property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="poseLegendSpacer">
+             <property name="orientation"><enum>Qt::Horizontal</enum></property>
+             <property name="sizeHint" stdset="0"><size><width>12</width><height>0</height></size></property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QLabel" name="assemblyPreviewLabel">
+             <property name="text"><string>装配零位预览 · 等待姿态数据</string></property>
+             <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+            </widget>
+           </item>
+          </layout>
          </item>
          <item>
-          <widget class="QCheckBox" name="trackPose">
-           <property name="enabled"><bool>false</bool></property>
-           <property name="text"><string>连续读取失能姿态</string></property>
+          <widget class="ArmView" name="armView">
+           <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Expanding"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+           <property name="minimumSize"><size><width>240</width><height>165</height></size></property>
+           <property name="toolTip"><string>左键拖动旋转，滚轮缩放，双击恢复视角。世界坐标系位于基座底面，两端的末端坐标系位于各自的 DH6。主端末端轴为实线，从端为虚线。</string></property>
           </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="poseFooterLayout">
+           <item>
+            <widget class="QCheckBox" name="trackPose">
+             <property name="enabled"><bool>false</bool></property>
+             <property name="text"><string>连续读取失能姿态</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="axesLegend">
+             <property name="text"><string>世界 / 末端　&lt;b style="color:#b33c32"&gt;X&lt;/b&gt;　&lt;b style="color:#25763f"&gt;Y&lt;/b&gt;　&lt;b style="color:#345db2"&gt;Z&lt;/b&gt;</string></property>
+             <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+            </widget>
+           </item>
+          </layout>
          </item>
         </layout>
        </widget>
@@ -1218,7 +1262,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
   <widget class="QStatusBar" name="statusbar" />
  </widget>
  <customwidgets>
-  <customwidget><class>ArmView</class><extends>QWidget</extends><header>ArmView</header></customwidget>
+  <customwidget><class>ArmView</class><extends>QOpenGLWidget</extends><header>ArmView</header></customwidget>
  </customwidgets>
  <resources />
  <connections />

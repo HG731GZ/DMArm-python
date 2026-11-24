@@ -1,0 +1,156 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="ur_master_arm">
+  <compiler angle="radian" meshdir="meshes" inertiafromgeom="false" />
+  <asset>
+    <mesh name="elbow_bracket" file="elbow_bracket.stl" />
+    <mesh name="elbow_bracket_hull" file="elbow_bracket_hull.stl" />
+    <mesh name="tube_147" file="tube_147.stl" />
+    <mesh name="tube_147_hull" file="tube_147_hull.stl" />
+    <mesh name="dm4340_cover" file="dm4340_cover.stl" />
+    <mesh name="dm4340_cover_hull" file="dm4340_cover_hull.stl" />
+    <mesh name="output_shaft" file="output_shaft.stl" />
+    <mesh name="output_shaft_hull" file="output_shaft_hull.stl" />
+    <mesh name="dm4340_rear" file="dm4340_rear.stl" />
+    <mesh name="dm4340_rear_hull" file="dm4340_rear_hull.stl" />
+    <mesh name="dm4340_housing" file="dm4340_housing.stl" />
+    <mesh name="dm4340_housing_hull" file="dm4340_housing_hull.stl" />
+    <mesh name="base_cover" file="base_cover.stl" />
+    <mesh name="base_cover_hull" file="base_cover_hull.stl" />
+    <mesh name="base_bracket" file="base_bracket.stl" />
+    <mesh name="base_bracket_hull" file="base_bracket_hull.stl" />
+    <mesh name="dm4310_rear" file="dm4310_rear.stl" />
+    <mesh name="dm4310_rear_hull" file="dm4310_rear_hull.stl" />
+    <mesh name="dm4310_front" file="dm4310_front.stl" />
+    <mesh name="dm4310_front_hull" file="dm4310_front_hull.stl" />
+    <mesh name="dm4310_housing" file="dm4310_housing.stl" />
+    <mesh name="dm4310_housing_hull" file="dm4310_housing_hull.stl" />
+    <mesh name="wrist_a_bracket" file="wrist_a_bracket.stl" />
+    <mesh name="wrist_a_bracket_hull" file="wrist_a_bracket_hull.stl" />
+    <mesh name="tube_137" file="tube_137.stl" />
+    <mesh name="tube_137_hull" file="tube_137_hull.stl" />
+    <mesh name="dm4310_cover" file="dm4310_cover.stl" />
+    <mesh name="dm4310_cover_hull" file="dm4310_cover_hull.stl" />
+    <mesh name="shoulder_shaft" file="shoulder_shaft.stl" />
+    <mesh name="shoulder_shaft_hull" file="shoulder_shaft_hull.stl" />
+    <mesh name="shoulder_bracket" file="shoulder_bracket.stl" />
+    <mesh name="shoulder_bracket_hull" file="shoulder_bracket_hull.stl" />
+    <mesh name="wrist_b_bracket" file="wrist_b_bracket.stl" />
+    <mesh name="wrist_b_bracket_hull" file="wrist_b_bracket_hull.stl" />
+    <mesh name="tool_coupler" file="tool_coupler.stl" />
+    <mesh name="tool_coupler_hull" file="tool_coupler_hull.stl" />
+    <mesh name="pendant_frame" file="pendant_frame.stl" />
+    <mesh name="pendant_frame_hull" file="pendant_frame_hull.stl" />
+    <mesh name="pendant_motor" file="pendant_motor.stl" />
+    <mesh name="pendant_motor_hull" file="pendant_motor_hull.stl" />
+    <mesh name="pendant_coupler" file="pendant_coupler.stl" />
+    <mesh name="pendant_coupler_hull" file="pendant_coupler_hull.stl" />
+    <mesh name="pendant_rotor" file="pendant_rotor.stl" />
+    <mesh name="pendant_rotor_hull" file="pendant_rotor_hull.stl" />
+  </asset>
+  <worldbody>
+    <body name="base_link" pos="0 0 0" quat="1 0 0 0">
+      <inertial pos="1.191524896713e-08 9.243137199028e-05 0.041449616169" mass="0.6242256594214" fullinertia="0.0006259234388308 0.0006243195671826 0.0005033960935795 -3.207597949386e-08 1.321676796518e-10 9.133693058693e-07" />
+      <body name="DH1" pos="0 0 0.13575" quat="1 0 0 0">
+        <joint name="joint1" type="hinge" axis="0 0 1" limited="false" />
+        <inertial pos="1.022349882784e-07 -0.002648699586569 -0.003133514215006" mass="0.5487280055088" fullinertia="0.0004085684334489 0.0003632619975317 0.0003455385209447 -1.938483112265e-09 -3.12763551537e-08 4.494382647809e-06" />
+        <body name="DH2" pos="0 0 0" quat="0.5 0.5 -0.5 0.5">
+          <joint name="joint2" type="hinge" axis="0 0 1" limited="false" />
+          <inertial pos="0.1646654171404 -1.591268539174e-08 0.06107400667918" mass="0.7502776392424" fullinertia="0.0004294421042603 0.004556321317393 0.004505925596986 -3.173812131394e-08 -5.771297945954e-05 9.232498065046e-11" />
+          <body name="DH3" pos="0.21 0 0" quat="1 0 0 0">
+            <joint name="joint3" type="hinge" axis="0 0 1" limited="false" />
+            <inertial pos="0.1515526459812 2.800843919734e-08 -0.002837105046204" mass="0.6531392572286" fullinertia="0.0003438397213601 0.003838751098421 0.003827054158166 6.009534540617e-08 0.0002393464301664 -2.446699350083e-10" />
+            <body name="DH4" pos="0.2 0 0.062" quat="0.7071067811865 0 0 0.7071067811865">
+              <joint name="joint4" type="hinge" axis="0 0 1" limited="false" />
+              <inertial pos="-1.807383869078e-08 -0.004718477338554 -0.001152216729369" mass="0.4316783426326" fullinertia="0.0002475898982578 0.0002513999397588 0.0002303622296894 1.479597042634e-11 -6.048237544792e-08 3.135511738038e-06" />
+              <body name="DH5" pos="0 -0.073 0" quat="0.7071067811865 0.7071067811865 0 0">
+                <joint name="joint5" type="hinge" axis="0 0 1" limited="false" />
+                <inertial pos="1.807384039501e-08 0.004718477338554 -0.001152216729369" mass="0.4316783426326" fullinertia="0.0002475898982578 0.0002513999397588 0.0002303622296894 1.479597038263e-11 6.048237544768e-08 -3.135511738038e-06" />
+                <body name="DH6" pos="0 0.036 0" quat="-0.7071067811865 0.7071067811865 0 0">
+                  <joint name="joint6" type="hinge" axis="0 0 1" limited="false" />
+                  <inertial pos="0.004052910272566 -0.009027346394553 0.03711428231369" mass="0.2776435129187" fullinertia="0.0002732578478707 0.0002594690453363 0.0001127469083927 5.430935827955e-06 -3.461683791836e-06 7.799868430634e-06" />
+                  <geom type="mesh" mesh="tool_coupler" name="DH6_tool_coupler" pos="1.592907315865e-13 0 -0.0076" quat="0 0.7071067811865 0 -0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+                  <geom type="mesh" mesh="tool_coupler_hull" name="DH6_tool_coupler_hull" pos="1.592907315865e-13 0 -0.0076" quat="0 0.7071067811865 0 -0.7071067811865" group="3" />
+                  <geom type="mesh" mesh="pendant_frame" name="DH6_pendant_frame" pos="1.593349501299e-13 0 0.0004" quat="-0.1950903220161 0 0 0.9807852804032" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+                  <geom type="mesh" mesh="pendant_frame_hull" name="DH6_pendant_frame_hull" pos="1.593349501299e-13 0 0.0004" quat="-0.1950903220161 0 0 0.9807852804032" group="3" />
+                  <geom type="mesh" mesh="pendant_motor" name="DH6_pendant_motor" pos="0.007232716871863 -0.01746132316447 0.0394" quat="0.693519922661 -0.1379496896415 0.6935199226611 0.1379496896415" group="2" contype="0" conaffinity="0" rgba="1 1 1 1" />
+                  <geom type="mesh" mesh="pendant_motor_hull" name="DH6_pendant_motor_hull" pos="0.007232716871863 -0.01746132316447 0.0394" quat="0.693519922661 -0.1379496896415 0.6935199226611 0.1379496896415" group="3" />
+                  <geom type="mesh" mesh="pendant_coupler" name="DH6_pendant_coupler" pos="1.593349501299e-13 0 0.0004" quat="-0.2705980500731 0.6532814824382 0.2705980500731 0.6532814824382" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+                  <geom type="mesh" mesh="pendant_coupler_hull" name="DH6_pendant_coupler_hull" pos="1.593349501299e-13 0 0.0004" quat="-0.2705980500731 0.6532814824382 0.2705980500731 0.6532814824382" group="3" />
+                  <geom type="mesh" mesh="pendant_rotor" name="DH6_pendant_rotor" pos="0.00723271687186 -0.01746132316447 0.0394" quat="-0.1950896699517 -0.00253580566898 -0.0005044031088315 0.9807820022539" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+                  <geom type="mesh" mesh="pendant_rotor_hull" name="DH6_pendant_rotor_hull" pos="0.00723271687186 -0.01746132316447 0.0394" quat="-0.1950896699517 -0.00253580566898 -0.0005044031088315 0.9807820022539" group="3" />
+                </body>
+                <geom type="mesh" mesh="wrist_b_bracket" name="DH5_wrist_b_bracket" pos="0 0.036 0" quat="0.7071067811865 0 0 -0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+                <geom type="mesh" mesh="wrist_b_bracket_hull" name="DH5_wrist_b_bracket_hull" pos="0 0.036 0" quat="0.7071067811865 0 0 -0.7071067811865" group="3" />
+                <geom type="mesh" mesh="dm4310_rear" name="DH5_dm4310_rear" pos="0 -0.0176 0" quat="0.7071067811865 0 0.7071067811866 0" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+                <geom type="mesh" mesh="dm4310_rear_hull" name="DH5_dm4310_rear_hull" pos="0 -0.0176 0" quat="0.7071067811865 0 0.7071067811866 0" group="3" />
+                <geom type="mesh" mesh="dm4310_front" name="DH5_dm4310_front" pos="0 0.028 0" quat="0 1 0 0" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+                <geom type="mesh" mesh="dm4310_front_hull" name="DH5_dm4310_front_hull" pos="0 0.028 0" quat="0 1 0 0" group="3" />
+                <geom type="mesh" mesh="dm4310_housing" name="DH5_dm4310_housing" pos="0 0.0279 0" quat="0 -0.7071067811865 0 0.7071067811866" group="2" contype="0" conaffinity="0" rgba="1 1 1 1" />
+                <geom type="mesh" mesh="dm4310_housing_hull" name="DH5_dm4310_housing_hull" pos="0 0.0279 0" quat="0 -0.7071067811865 0 0.7071067811866" group="3" />
+                <geom type="mesh" mesh="dm4310_cover" name="DH5_dm4310_cover" pos="0 -0.032 0" quat="0.5 -0.5 -0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+                <geom type="mesh" mesh="dm4310_cover_hull" name="DH5_dm4310_cover_hull" pos="0 -0.032 0" quat="0.5 -0.5 -0.5 0.5" group="3" />
+              </body>
+              <geom type="mesh" mesh="dm4310_cover" name="DH4_dm4310_cover" pos="0 0.032 0" quat="-0.5 0.5 -0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+              <geom type="mesh" mesh="dm4310_cover_hull" name="DH4_dm4310_cover_hull" pos="0 0.032 0" quat="-0.5 0.5 -0.5 0.5" group="3" />
+              <geom type="mesh" mesh="wrist_b_bracket" name="DH4_wrist_b_bracket" pos="0 -0.036 0" quat="0.7071067811865 0 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+              <geom type="mesh" mesh="wrist_b_bracket_hull" name="DH4_wrist_b_bracket_hull" pos="0 -0.036 0" quat="0.7071067811865 0 0 0.7071067811865" group="3" />
+              <geom type="mesh" mesh="dm4310_rear" name="DH4_dm4310_rear" pos="0 0.0176 0" quat="0 0.7071067811865 0 -0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+              <geom type="mesh" mesh="dm4310_rear_hull" name="DH4_dm4310_rear_hull" pos="0 0.0176 0" quat="0 0.7071067811865 0 -0.7071067811865" group="3" />
+              <geom type="mesh" mesh="dm4310_front" name="DH4_dm4310_front" pos="0 -0.028 0" quat="0 0 1 0" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+              <geom type="mesh" mesh="dm4310_front_hull" name="DH4_dm4310_front_hull" pos="0 -0.028 0" quat="0 0 1 0" group="3" />
+              <geom type="mesh" mesh="dm4310_housing" name="DH4_dm4310_housing" pos="0 -0.0279 0" quat="0.7071067811865 0 0.7071067811865 0" group="2" contype="0" conaffinity="0" rgba="1 1 1 1" />
+              <geom type="mesh" mesh="dm4310_housing_hull" name="DH4_dm4310_housing_hull" pos="0 -0.0279 0" quat="0.7071067811865 0 0.7071067811865 0" group="3" />
+            </body>
+            <geom type="mesh" mesh="output_shaft" name="DH3_output_shaft" pos="0.017 0 0.017" quat="-0.7071067811865 0 0.7071067811865 0" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+            <geom type="mesh" mesh="output_shaft_hull" name="DH3_output_shaft_hull" pos="0.017 0 0.017" quat="-0.7071067811865 0 0.7071067811865 0" group="3" />
+            <geom type="mesh" mesh="dm4310_rear" name="DH3_dm4310_rear" pos="0.2 0 -0.0286" quat="0 0 0.7071067811866 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+            <geom type="mesh" mesh="dm4310_rear_hull" name="DH3_dm4310_rear_hull" pos="0.2 0 -0.0286" quat="0 0 0.7071067811866 0.7071067811865" group="3" />
+            <geom type="mesh" mesh="dm4310_front" name="DH3_dm4310_front" pos="0.2 0 0.017" quat="0.5 -0.5 -0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+            <geom type="mesh" mesh="dm4310_front_hull" name="DH3_dm4310_front_hull" pos="0.2 0 0.017" quat="0.5 -0.5 -0.5 0.5" group="3" />
+            <geom type="mesh" mesh="dm4310_housing" name="DH3_dm4310_housing" pos="0.2 0 0.0169" quat="0 0 -0.7071067811865 0.7071067811866" group="2" contype="0" conaffinity="0" rgba="1 1 1 1" />
+            <geom type="mesh" mesh="dm4310_housing_hull" name="DH3_dm4310_housing_hull" pos="0.2 0 0.0169" quat="0 0 -0.7071067811865 0.7071067811866" group="3" />
+            <geom type="mesh" mesh="wrist_a_bracket" name="DH3_wrist_a_bracket" pos="0.2 0 0.025" quat="0.7071067811865 0 0.7071067811865 0" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+            <geom type="mesh" mesh="wrist_a_bracket_hull" name="DH3_wrist_a_bracket_hull" pos="0.2 0 0.025" quat="0.7071067811865 0 0.7071067811865 0" group="3" />
+            <geom type="mesh" mesh="tube_137" name="DH3_tube_137" pos="0.0945 0 0" quat="0 0 0.9238795325113 0.3826834323651" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+            <geom type="mesh" mesh="tube_137_hull" name="DH3_tube_137_hull" pos="0.0945 0 0" quat="0 0 0.9238795325113 0.3826834323651" group="3" />
+            <geom type="mesh" mesh="dm4310_cover" name="DH3_dm4310_cover" pos="0.2 0 -0.043" quat="-0.7071067811865 0 0.7071067811865 0" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+            <geom type="mesh" mesh="dm4310_cover_hull" name="DH3_dm4310_cover_hull" pos="0.2 0 -0.043" quat="-0.7071067811865 0 0.7071067811865 0" group="3" />
+          </body>
+          <geom type="mesh" mesh="elbow_bracket" name="DH2_elbow_bracket" pos="0.21 0 0.02575" quat="0 0.7071067811865 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+          <geom type="mesh" mesh="elbow_bracket_hull" name="DH2_elbow_bracket_hull" pos="0.21 0 0.02575" quat="0 0.7071067811865 0 0.7071067811865" group="3" />
+          <geom type="mesh" mesh="tube_147" name="DH2_tube_147" pos="0.0995 0 0.064" quat="0 0 0.3826834323651 0.9238795325113" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+          <geom type="mesh" mesh="tube_147_hull" name="DH2_tube_147_hull" pos="0.0995 0 0.064" quat="0 0 0.3826834323651 0.9238795325113" group="3" />
+          <geom type="mesh" mesh="dm4340_cover" name="DH2_dm4340_cover" pos="0.21 0 0.10375" quat="0 -0.7071067811865 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+          <geom type="mesh" mesh="dm4340_cover_hull" name="DH2_dm4340_cover_hull" pos="0.21 0 0.10375" quat="0 -0.7071067811865 0 0.7071067811865" group="3" />
+          <geom type="mesh" mesh="output_shaft" name="DH2_output_shaft" pos="0.017 0 0.047" quat="0 -0.7071067811865 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+          <geom type="mesh" mesh="output_shaft_hull" name="DH2_output_shaft_hull" pos="0.017 0 0.047" quat="0 -0.7071067811865 0 0.7071067811865" group="3" />
+          <geom type="mesh" mesh="dm4340_rear" name="DH2_dm4340_rear" pos="0.21 0 0.0885" quat="0 0 0.7071067811865 -0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+          <geom type="mesh" mesh="dm4340_rear_hull" name="DH2_dm4340_rear_hull" pos="0.21 0 0.0885" quat="0 0 0.7071067811865 -0.7071067811865" group="3" />
+          <geom type="mesh" mesh="dm4340_housing" name="DH2_dm4340_housing" pos="0.21 0 0.032" quat="0.7071067811865 0.7071067811865 0 0" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+          <geom type="mesh" mesh="dm4340_housing_hull" name="DH2_dm4340_housing_hull" pos="0.21 0 0.032" quat="0.7071067811865 0.7071067811865 0 0" group="3" />
+        </body>
+        <geom type="mesh" mesh="dm4340_rear" name="DH1_dm4340_rear" pos="0 0.0245 0" quat="0 0.7071067811865 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+        <geom type="mesh" mesh="dm4340_rear_hull" name="DH1_dm4340_rear_hull" pos="0 0.0245 0" quat="0 0.7071067811865 0 0.7071067811865" group="3" />
+        <geom type="mesh" mesh="dm4340_housing" name="DH1_dm4340_housing" pos="0 -0.032 0" quat="0.7071067811865 0 0.7071067811865 0" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+        <geom type="mesh" mesh="dm4340_housing_hull" name="DH1_dm4340_housing_hull" pos="0 -0.032 0" quat="0.7071067811865 0 0.7071067811865 0" group="3" />
+        <geom type="mesh" mesh="dm4340_cover" name="DH1_dm4340_cover" pos="0 0.03975 0" quat="0.5 -0.5 0.5 -0.5" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+        <geom type="mesh" mesh="dm4340_cover_hull" name="DH1_dm4340_cover_hull" pos="0 0.03975 0" quat="0.5 -0.5 0.5 -0.5" group="3" />
+        <geom type="mesh" mesh="shoulder_shaft" name="DH1_shoulder_shaft" pos="0 0 -0.057" quat="0.3928474791936 0.3928474791936 0.5879378012097 0.5879378012097" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+        <geom type="mesh" mesh="shoulder_shaft_hull" name="DH1_shoulder_shaft_hull" pos="0 0 -0.057" quat="0.3928474791936 0.3928474791936 0.5879378012097 0.5879378012097" group="3" />
+        <geom type="mesh" mesh="shoulder_bracket" name="DH1_shoulder_bracket" pos="0 -0.03825 0" quat="0.7071067811865 0 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+        <geom type="mesh" mesh="shoulder_bracket_hull" name="DH1_shoulder_bracket_hull" pos="0 -0.03825 0" quat="0.7071067811865 0 0 0.7071067811865" group="3" />
+      </body>
+      <geom type="mesh" mesh="base_cover" name="base_link_base_cover" pos="0 0 0" quat="0 0.7071067811865 0 0.7071067811865" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+      <geom type="mesh" mesh="base_cover_hull" name="base_link_base_cover_hull" pos="0 0 0" quat="0 0.7071067811865 0 0.7071067811865" group="3" />
+      <geom type="mesh" mesh="dm4340_rear" name="base_link_dm4340_rear" pos="0 0 0.02225" quat="0.5 0.5 0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+      <geom type="mesh" mesh="dm4340_rear_hull" name="base_link_dm4340_rear_hull" pos="0 0 0.02225" quat="0.5 0.5 0.5 0.5" group="3" />
+      <geom type="mesh" mesh="dm4340_housing" name="base_link_dm4340_housing" pos="0 0 0.07875" quat="-0.5 0.5 -0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+      <geom type="mesh" mesh="dm4340_housing_hull" name="base_link_dm4340_housing_hull" pos="0 0 0.07875" quat="-0.5 0.5 -0.5 0.5" group="3" />
+      <geom type="mesh" mesh="base_bracket" name="base_link_base_bracket" pos="0 0 0.085" quat="-0.5 -0.5 -0.5 0.5" group="2" contype="0" conaffinity="0" rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+      <geom type="mesh" mesh="base_bracket_hull" name="base_link_base_bracket_hull" pos="0 0 0.085" quat="-0.5 -0.5 -0.5 0.5" group="3" />
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="base_link" body2="DH1" />
+  </contact>
+</mujoco>

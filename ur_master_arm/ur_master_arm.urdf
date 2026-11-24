@@ -1,0 +1,584 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="ur_master_arm">
+  <mujoco>
+    <compiler meshdir="meshes" strippath="true" discardvisual="false" fusestatic="false" balanceinertia="false" />
+  </mujoco>
+  <link name="base_link">
+    <inertial>
+      <origin xyz="1.191524896713e-08 9.243137199028e-05 0.041449616169" rpy="0 0 0" />
+      <mass value="0.6242256594214" />
+      <inertia ixx="0.0006259234388308" iyy="0.0006243195671826" izz="0.0005033960935795" ixy="-3.207597949386e-08" ixz="1.321676796518e-10" iyz="9.133693058693e-07" />
+    </inertial>
+    <visual name="base_link_base_cover">
+      <origin xyz="0 0 0" rpy="-3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/base_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="base_link_base_cover_hull">
+      <origin xyz="0 0 0" rpy="-3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/base_cover_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="base_link_dm4340_rear">
+      <origin xyz="0 0 0.02225" rpy="1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="base_link_dm4340_rear_hull">
+      <origin xyz="0 0 0.02225" rpy="1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="base_link_dm4340_housing">
+      <origin xyz="0 0 0.07875" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="base_link_dm4340_housing_hull">
+      <origin xyz="0 0 0.07875" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="base_link_base_bracket">
+      <origin xyz="0 0 0.085" rpy="1.570796326795 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/base_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="base_link_base_bracket_hull">
+      <origin xyz="0 0 0.085" rpy="1.570796326795 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/base_bracket_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="DH1">
+    <inertial>
+      <origin xyz="1.022349882784e-07 -0.002648699586569 -0.003133514215006" rpy="0 0 0" />
+      <mass value="0.5487280055088" />
+      <inertia ixx="0.0004085684334489" iyy="0.0003632619975317" izz="0.0003455385209447" ixy="-1.938483112265e-09" ixz="-3.12763551537e-08" iyz="4.494382647809e-06" />
+    </inertial>
+    <visual name="DH1_dm4340_rear">
+      <origin xyz="0 0.0245 0" rpy="3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH1_dm4340_rear_hull">
+      <origin xyz="0 0.0245 0" rpy="3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH1_dm4340_housing">
+      <origin xyz="0 -0.032 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH1_dm4340_housing_hull">
+      <origin xyz="0 -0.032 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH1_dm4340_cover">
+      <origin xyz="0 0.03975 0" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH1_dm4340_cover_hull">
+      <origin xyz="0 0.03975 0" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4340_cover_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH1_shoulder_shaft">
+      <origin xyz="0 0 -0.057" rpy="1.570796326795 0 1.963495408494" />
+      <geometry>
+        <mesh filename="meshes/shoulder_shaft.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH1_shoulder_shaft_hull">
+      <origin xyz="0 0 -0.057" rpy="1.570796326795 0 1.963495408494" />
+      <geometry>
+        <mesh filename="meshes/shoulder_shaft_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH1_shoulder_bracket">
+      <origin xyz="0 -0.03825 0" rpy="0 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/shoulder_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH1_shoulder_bracket_hull">
+      <origin xyz="0 -0.03825 0" rpy="0 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/shoulder_bracket_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint1" type="continuous">
+    <parent link="base_link" />
+    <child link="DH1" />
+    <origin xyz="0 0 0.13575" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="DH2">
+    <inertial>
+      <origin xyz="0.1646654171404 -1.591268539174e-08 0.06107400667918" rpy="0 0 0" />
+      <mass value="0.7502776392424" />
+      <inertia ixx="0.0004294421042603" iyy="0.004556321317393" izz="0.004505925596986" ixy="-3.173812131394e-08" ixz="-5.771297945954e-05" iyz="9.232498065046e-11" />
+    </inertial>
+    <visual name="DH2_elbow_bracket">
+      <origin xyz="0.21 0 0.02575" rpy="3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/elbow_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH2_elbow_bracket_hull">
+      <origin xyz="0.21 0 0.02575" rpy="3.14159265359 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/elbow_bracket_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH2_tube_147">
+      <origin xyz="0.0995 0 0.064" rpy="0.7853981633974 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/tube_147.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH2_tube_147_hull">
+      <origin xyz="0.0995 0 0.064" rpy="0.7853981633974 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/tube_147_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH2_dm4340_cover">
+      <origin xyz="0.21 0 0.10375" rpy="-3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH2_dm4340_cover_hull">
+      <origin xyz="0.21 0 0.10375" rpy="-3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_cover_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH2_output_shaft">
+      <origin xyz="0.017 0 0.047" rpy="-3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/output_shaft.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH2_output_shaft_hull">
+      <origin xyz="0.017 0 0.047" rpy="-3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/output_shaft_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH2_dm4340_rear">
+      <origin xyz="0.21 0 0.0885" rpy="-1.570796326795 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH2_dm4340_rear_hull">
+      <origin xyz="0.21 0 0.0885" rpy="-1.570796326795 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4340_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH2_dm4340_housing">
+      <origin xyz="0.21 0 0.032" rpy="1.570796326795 0 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH2_dm4340_housing_hull">
+      <origin xyz="0.21 0 0.032" rpy="1.570796326795 0 0" />
+      <geometry>
+        <mesh filename="meshes/dm4340_housing_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint2" type="continuous">
+    <parent link="DH1" />
+    <child link="DH2" />
+    <origin xyz="0 0 0" rpy="1.570796326795 -1.570796326795 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="DH3">
+    <inertial>
+      <origin xyz="0.1515526459812 2.800843919734e-08 -0.002837105046204" rpy="0 0 0" />
+      <mass value="0.6531392572286" />
+      <inertia ixx="0.0003438397213601" iyy="0.003838751098421" izz="0.003827054158166" ixy="6.009534540617e-08" ixz="0.0002393464301664" iyz="-2.446699350083e-10" />
+    </inertial>
+    <visual name="DH3_output_shaft">
+      <origin xyz="0.017 0 0.017" rpy="0 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/output_shaft.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH3_output_shaft_hull">
+      <origin xyz="0.017 0 0.017" rpy="0 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/output_shaft_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_dm4310_rear">
+      <origin xyz="0.2 0 -0.0286" rpy="1.570796326795 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH3_dm4310_rear_hull">
+      <origin xyz="0.2 0 -0.0286" rpy="1.570796326795 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_dm4310_front">
+      <origin xyz="0.2 0 0.017" rpy="-1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH3_dm4310_front_hull">
+      <origin xyz="0.2 0 0.017" rpy="-1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_dm4310_housing">
+      <origin xyz="0.2 0 0.0169" rpy="-1.570796326795 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing.stl" />
+      </geometry>
+      <material name="cad_4" />
+    </visual>
+    <collision name="DH3_dm4310_housing_hull">
+      <origin xyz="0.2 0 0.0169" rpy="-1.570796326795 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_wrist_a_bracket">
+      <origin xyz="0.2 0 0.025" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/wrist_a_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH3_wrist_a_bracket_hull">
+      <origin xyz="0.2 0 0.025" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/wrist_a_bracket_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_tube_137">
+      <origin xyz="0.0945 0 0" rpy="2.356194490192 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/tube_137.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH3_tube_137_hull">
+      <origin xyz="0.0945 0 0" rpy="2.356194490192 0 3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/tube_137_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH3_dm4310_cover">
+      <origin xyz="0.2 0 -0.043" rpy="0 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH3_dm4310_cover_hull">
+      <origin xyz="0.2 0 -0.043" rpy="0 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint3" type="continuous">
+    <parent link="DH2" />
+    <child link="DH3" />
+    <origin xyz="0.21 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="DH4">
+    <inertial>
+      <origin xyz="-1.807383869078e-08 -0.004718477338554 -0.001152216729369" rpy="0 0 0" />
+      <mass value="0.4316783426326" />
+      <inertia ixx="0.0002475898982578" iyy="0.0002513999397588" izz="0.0002303622296894" ixy="1.479597042634e-11" ixz="-6.048237544792e-08" iyz="3.135511738038e-06" />
+    </inertial>
+    <visual name="DH4_dm4310_cover">
+      <origin xyz="0 0.032 0" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH4_dm4310_cover_hull">
+      <origin xyz="0 0.032 0" rpy="-1.570796326795 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH4_wrist_b_bracket">
+      <origin xyz="0 -0.036 0" rpy="0 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/wrist_b_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH4_wrist_b_bracket_hull">
+      <origin xyz="0 -0.036 0" rpy="0 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/wrist_b_bracket_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH4_dm4310_rear">
+      <origin xyz="0 0.0176 0" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH4_dm4310_rear_hull">
+      <origin xyz="0 0.0176 0" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH4_dm4310_front">
+      <origin xyz="0 -0.028 0" rpy="-3.14159265359 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH4_dm4310_front_hull">
+      <origin xyz="0 -0.028 0" rpy="-3.14159265359 0 -3.14159265359" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH4_dm4310_housing">
+      <origin xyz="0 -0.0279 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing.stl" />
+      </geometry>
+      <material name="cad_4" />
+    </visual>
+    <collision name="DH4_dm4310_housing_hull">
+      <origin xyz="0 -0.0279 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint4" type="continuous">
+    <parent link="DH3" />
+    <child link="DH4" />
+    <origin xyz="0.2 0 0.062" rpy="0 0 1.570796326795" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="DH5">
+    <inertial>
+      <origin xyz="1.807384039501e-08 0.004718477338554 -0.001152216729369" rpy="0 0 0" />
+      <mass value="0.4316783426326" />
+      <inertia ixx="0.0002475898982578" iyy="0.0002513999397588" izz="0.0002303622296894" ixy="1.479597038263e-11" ixz="6.048237544768e-08" iyz="-3.135511738038e-06" />
+    </inertial>
+    <visual name="DH5_wrist_b_bracket">
+      <origin xyz="0 0.036 0" rpy="0 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/wrist_b_bracket.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH5_wrist_b_bracket_hull">
+      <origin xyz="0 0.036 0" rpy="0 0 -1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/wrist_b_bracket_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH5_dm4310_rear">
+      <origin xyz="0 -0.0176 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH5_dm4310_rear_hull">
+      <origin xyz="0 -0.0176 0" rpy="0 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_rear_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH5_dm4310_front">
+      <origin xyz="0 0.028 0" rpy="3.14159265359 0 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front.stl" />
+      </geometry>
+      <material name="cad_3" />
+    </visual>
+    <collision name="DH5_dm4310_front_hull">
+      <origin xyz="0 0.028 0" rpy="3.14159265359 0 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_front_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH5_dm4310_housing">
+      <origin xyz="0 0.0279 0" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing.stl" />
+      </geometry>
+      <material name="cad_4" />
+    </visual>
+    <collision name="DH5_dm4310_housing_hull">
+      <origin xyz="0 0.0279 0" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/dm4310_housing_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH5_dm4310_cover">
+      <origin xyz="0 -0.032 0" rpy="-1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH5_dm4310_cover_hull">
+      <origin xyz="0 -0.032 0" rpy="-1.570796326795 0 1.570796326795" />
+      <geometry>
+        <mesh filename="meshes/dm4310_cover_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint5" type="continuous">
+    <parent link="DH4" />
+    <child link="DH5" />
+    <origin xyz="0 -0.073 0" rpy="1.570796326795 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="DH6">
+    <inertial>
+      <origin xyz="0.004052910272566 -0.009027346394553 0.03711428231369" rpy="0 0 0" />
+      <mass value="0.2776435129187" />
+      <inertia ixx="0.0002732578478707" iyy="0.0002594690453363" izz="0.0001127469083927" ixy="5.430935827955e-06" ixz="-3.461683791836e-06" iyz="7.799868430634e-06" />
+    </inertial>
+    <visual name="DH6_tool_coupler">
+      <origin xyz="1.592907315865e-13 0 -0.0076" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/tool_coupler.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH6_tool_coupler_hull">
+      <origin xyz="1.592907315865e-13 0 -0.0076" rpy="3.14159265359 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/tool_coupler_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH6_pendant_frame">
+      <origin xyz="1.593349501299e-13 0 0.0004" rpy="0 0 -2.748893571891" />
+      <geometry>
+        <mesh filename="meshes/pendant_frame.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH6_pendant_frame_hull">
+      <origin xyz="1.593349501299e-13 0 0.0004" rpy="0 0 -2.748893571891" />
+      <geometry>
+        <mesh filename="meshes/pendant_frame_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH6_pendant_motor">
+      <origin xyz="0.007232716871863 -0.01746132316447 0.0394" rpy="-0.3926990816987 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/pendant_motor.stl" />
+      </geometry>
+      <material name="cad_4" />
+    </visual>
+    <collision name="DH6_pendant_motor_hull">
+      <origin xyz="0.007232716871863 -0.01746132316447 0.0394" rpy="-0.3926990816987 1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/pendant_motor_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH6_pendant_coupler">
+      <origin xyz="1.593349501299e-13 0 0.0004" rpy="-2.356194490192 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/pendant_coupler.stl" />
+      </geometry>
+      <material name="cad_2" />
+    </visual>
+    <collision name="DH6_pendant_coupler_hull">
+      <origin xyz="1.593349501299e-13 0 0.0004" rpy="-2.356194490192 -1.570796326795 0" />
+      <geometry>
+        <mesh filename="meshes/pendant_coupler_hull.stl" />
+      </geometry>
+    </collision>
+    <visual name="DH6_pendant_rotor">
+      <origin xyz="0.00723271687186 -0.01746132316447 0.0394" rpy="0 0.005170975839162 -2.748893571891" />
+      <geometry>
+        <mesh filename="meshes/pendant_rotor.stl" />
+      </geometry>
+      <material name="cad_1" />
+    </visual>
+    <collision name="DH6_pendant_rotor_hull">
+      <origin xyz="0.00723271687186 -0.01746132316447 0.0394" rpy="0 0.005170975839162 -2.748893571891" />
+      <geometry>
+        <mesh filename="meshes/pendant_rotor_hull.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint6" type="continuous">
+    <parent link="DH5" />
+    <child link="DH6" />
+    <origin xyz="0 0.036 0" rpy="-1.570796326795 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <material name="cad_1">
+    <color rgba="0.6980392156863 0.6980392156863 0.6980392156863 1" />
+  </material>
+  <material name="cad_2">
+    <color rgba="0.8980392156863 0.9176470588235 0.9294117647059 1" />
+  </material>
+  <material name="cad_3">
+    <color rgba="0.7921568627451 0.8196078431373 0.9333333333333 1" />
+  </material>
+  <material name="cad_4">
+    <color rgba="1 1 1 1" />
+  </material>
+</robot>

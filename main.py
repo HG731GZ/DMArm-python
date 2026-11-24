@@ -39,6 +39,8 @@ QUERY_TIMEOUT_S = 0.5  # 单条只读查询等待应答的时限，单位 s
 POSE_PERIOD_S = 0.10  # 连续读取失能姿态的轮间隔，单位 s
 UI_REFRESH_MS = 10  # 界面快照刷新间隔，单位 ms
 POSE_DISPLAY_MS = 50  # 主从姿态图、从端关节表及 UDP 统计的显示间隔，单位 ms
+ARM_MODEL_URDF = PROJECT_DIR / "ur_master_arm" / "ur_master_arm.urdf"  # 主从共用的实体模型入口
+SLAVE_MODEL_OPACITY = 0.40  # 从端模型不透明度，无量纲，0 为全透明，1 为实心
 CAN_CYCLE_DELAY_S = 0  # 本轮 CAN FD 反馈收齐后到下一轮的等待时间，单位 s；0 表示立即继续
 CAN_COMMAND_MAX_AGE_S = 0.50  # 从控制所用六轴反馈起算的指令有效期，单位 s；超龄由 CAN 进程逐轴失能并回读
 TOOL_UPDATE_CYCLES = 50  # 每隔多少轮 CAN FD 周期发送一次夹钳指令，取正整数；1 表示每轮都发
@@ -112,6 +114,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.ui = ui = Ui_Form1()
         ui.setupUi(self)
+        ui.armView.set_model(ARM_MODEL_URDF, SLAVE_MODEL_OPACITY)
         self.last_feedback = None
         self.worker = None
         self.udp = None
@@ -244,6 +247,9 @@ class MainWindow(QtWidgets.QMainWindow):
         view = self.ui.armView
         models = (view.master, view.slave)
         if models != self.drawn_models:
+            self.ui.masterLegend.setEnabled(view.master is not None)
+            self.ui.slaveLegend.setEnabled(view.slave is not None)
+            self.ui.assemblyPreviewLabel.setVisible(view.master is None and view.slave is None)
             view.update()
             self.drawn_models = models
         if link:
