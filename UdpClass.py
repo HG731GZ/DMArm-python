@@ -11,8 +11,9 @@ from zlib import crc32
 
 HEADER = bytes.fromhex("55 AA 55 AA")
 FOOTER = b"\r\n\r\n"
-# 从端载荷依次为关节角、模式、夹钳字段、实际速度、净驱动力矩和跟随状态。六轴均按 J1～J6 排列。
-SLAVE = struct.Struct(">6dB3d6d6dB")
+# 从端载荷依次为关节角、模式、夹钳字段、实际速度、关节力矩、遥操作状态和实际加速度。
+# 六轴均按 J1～J6 排列；载荷 218 字节，完整反馈帧 230 字节。
+SLAVE = struct.Struct(">6dB3d6d6dB6d")
 SLAVE_PAYLOAD_END = len(HEADER) + SLAVE.size
 SLAVE_FRAME_SIZE = SLAVE_PAYLOAD_END + 4 + len(FOOTER)
 MASTER = struct.Struct(">6dB3d6d")
@@ -21,11 +22,12 @@ MASTER = struct.Struct(">6dB3d6d")
 @dataclass(frozen=True)
 class SlaveFrame:
     q: tuple
-    mode: int
-    grip: tuple
+    mode: int  # 当前固定为 0，不表示控制模式
+    grip: tuple  # 开度、电流寄存器原始值、位置原始计数；不可用时为 NaN
     dq: tuple  # 实际速度，单位 rad/s
-    net_torque: tuple  # 净驱动力矩，单位 N·m；从端可逐轴回传 NaN
-    teleop_state: int  # 从端跟随状态，0 表示未开启，非零表示已开启
+    torque: tuple  # 单位 N·m；阻抗时为限幅后的命令力矩，其他模式为补偿实测力矩，可为 NaN
+    teleop_state: int  # 0：无有效遥操作；1：普通跟随；2：遥操作阻抗
+    ddq: tuple  # 实际加速度，单位 rad/s²；按 NaN 判断可用性，与遥操作状态独立
     received: float
     wall_time: float
     generation: int
@@ -38,10 +40,11 @@ def decode_slave(data):
     if crc32(payload) != int.from_bytes(data[SLAVE_PAYLOAD_END:-len(FOOTER)], "big"):
         raise ValueError("从端帧 CRC32 错误")
     values = SLAVE.unpack(payload)
-    net_torque = values[16:22]
-    if not all(map(isfinite, values[:16])) or any(map(isinf, net_torque)):
+    q, grip, dq, torque, ddq = values[:6], values[7:10], values[10:16], values[16:22], values[23:29]
+    # 角度和速度必须有效；夹钳、力矩、加速度允许协议约定的 NaN，原样传递。
+    if not all(map(isfinite, (*q, *dq))) or any(map(isinf, (*grip, *torque, *ddq))):
         raise ValueError("从端字段含无效数值")
-    return values[:6], values[6], values[7:10], values[10:16], net_torque, values[22]
+    return q, values[6], grip, dq, torque, values[22], ddq
 
 
 def encode_master(q, dq, grip):
@@ -80,14 +83,14 @@ class UdpClass(Thread):
                 self.rejected += 1
                 continue
             try:
-                q, mode, grip, dq, net_torque, teleop_state = decode_slave(data)
+                q, mode, grip, dq, torque, teleop_state, ddq = decode_slave(data)
             except ValueError:
                 self.rejected += 1
                 continue
             now = monotonic()
             if self.latest is None or now - self.latest.received > self.timeout:
                 generation += 1
-            self.latest = SlaveFrame(q, mode, grip, dq, net_torque, teleop_state, now, time(), generation)
+            self.latest = SlaveFrame(q, mode, grip, dq, torque, teleop_state, ddq, now, time(), generation)
             self.rx += 1
 
     def fresh(self):

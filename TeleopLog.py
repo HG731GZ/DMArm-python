@@ -20,8 +20,10 @@ def joint_columns(side, quantity):
 MOTOR_NAMES = (*[f"j{n}" for n in JOINTS], "gripper")
 MOTOR_FIELDS = ("position_rad", "velocity_rad_s", "torque_nm", "status")
 SLAVE_COLUMNS = (
-    "slave_received_unix_s", "slave_generation", "slave_mode", "slave_grip_1", "slave_grip_2", "slave_grip_3",
-    *joint_columns("slave", "q_rad"), *joint_columns("slave", "dq_rad_s"), *joint_columns("slave", "net_torque_nm"),
+    "slave_received_unix_s", "slave_generation", "slave_mode",
+    "slave_gripper_open", "slave_gripper_current_raw", "slave_gripper_position_raw",
+    *joint_columns("slave", "q_rad"), *joint_columns("slave", "dq_rad_s"), *joint_columns("slave", "torque_nm"),
+    "slave_teleop_state", *joint_columns("slave", "ddq_rad_s2"),
 )
 MASTER_COLUMNS = (
     "master_can_cycle", "master_feedback_max_age_ms", "master_force_feedback_on",
@@ -77,7 +79,8 @@ class TeleopSample(NamedTuple):
         if frame is None:
             row.extend((None,) * len(SLAVE_COLUMNS))
         else:
-            row.extend((frame.wall_time, frame.generation, frame.mode, *frame.grip, *frame.q, *frame.dq, *frame.net_torque))
+            row.extend((frame.wall_time, frame.generation, frame.mode, *frame.grip, *frame.q, *frame.dq,
+                        *frame.torque, frame.teleop_state, *frame.ddq))
         return ["NULL" if value is None else value for value in row]
 
 

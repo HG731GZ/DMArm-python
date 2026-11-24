@@ -597,8 +597,16 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
            <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示实际下发的总力矩（N·m）。持位时悬停可查看双环计算和限幅。</string></property></column>
            <column><property name="text"><string>从端速度
 (rad/s)</string></property><property name="toolTip"><string>从端回传的关节实际速度。</string></property></column>
-           <column><property name="text"><string>从端净力矩
-(N·m)</string></property><property name="toolTip"><string>从端回传的净驱动力矩，仅供观察。该轴回传 NaN 时显示“无效”，不影响阻抗力反馈。</string></property></column>
+           <column><property name="text"><string>从端力矩
+(N·m)</string></property><property name="toolTip"><string>阻抗控制时为限幅后的命令力矩，其他模式为补偿实测力矩；反馈没有独立来源标记。NaN 显示“无效”，仅供观察。</string></property></column>
+           <column><property name="text"><string>从端加速度
+(rad/s²)</string></property><property name="toolTip"><string>从端实际关节角加速度，直接使用收到的 rad/s² 数值。NaN 显示“无效”，不按遥操作状态屏蔽；零为有效数值。</string></property></column>
+           <item row="0" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="1" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="2" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="3" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="4" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
+           <item row="5" column="8"><property name="text"><string>—</string></property><property name="textAlignment"><set>Qt::AlignCenter</set></property></item>
            <item row="0" column="0">
             <property name="text">
              <string>J1</string>

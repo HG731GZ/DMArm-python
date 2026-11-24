@@ -109,7 +109,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.remotePort.setValue(UDP_REMOTE_PORT)
         for table in (ui.feedbackTable, ui.anglesTable):
             table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
-        for column in (0, 7):
+        for column in (0, 7, 8):
             ui.anglesTable.horizontalHeader().setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeToContents)
         self.timer = QtCore.QTimer(self, interval=UI_REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
@@ -317,9 +317,10 @@ class MainWindow(QtWidgets.QMainWindow):
             status = "等待有效从端帧"
             if last:
                 stamp = datetime.fromtimestamp(last.wall_time).strftime("%H:%M:%S.%f")[:-3]
-                grip = ", ".join(f"{v:.3f}" for v in last.grip)
+                grip = ", ".join("无效" if isnan(v) else f"{v:.3f}" for v in last.grip)
                 status = (f"{link.peer[0]}:{link.peer[1]}  末帧 {stamp}  "
-                          f"{'在线' if frame else '断流'}  mode {last.mode}  grip [{grip}]")
+                          f"{'在线' if frame else '断流'}  遥操作 {last.teleop_state}  "
+                          f"夹爪[开度, 原始电流, 原始位置] [{grip}]")
             self.ui.udpStatus.setText(f"{status}  RX {link.rx}  TX {link.tx}  丢弃 {link.rejected}")
 
     def refresh_udp(self, state=None):
@@ -549,19 +550,21 @@ class MainWindow(QtWidgets.QMainWindow):
                     label.setStyleSheet("background-color: #ffc4c4" if value > 60 else "")
 
     def show_slave_frame(self, frame):
-        """用同一帧刷新从端姿态、实际速度和净驱动力矩，断流时清除。"""
+        """用同一帧刷新从端姿态、实际速度、关节力矩及实际加速度，断流时清除。"""
         model = Robot_UR(frame.q, frame.dq) if frame else None
         self.ui.armView.slave = model
         table = self.ui.anglesTable
         for i in range(6):
-            angle = speed = torque = "—"
+            angle = speed = torque = acceleration = "—"
             if frame:
                 angle = f"{degrees(model.Angle[i]):.2f}"
                 speed = f"{frame.dq[i]:.3f}"
-                torque = "无效" if isnan(frame.net_torque[i]) else f"{frame.net_torque[i]:.3f}"
+                torque = "无效" if isnan(frame.torque[i]) else f"{frame.torque[i]:.3f}"
+                acceleration = "无效" if isnan(frame.ddq[i]) else f"{frame.ddq[i]:.3f}"
             table.item(i, 2).setText(angle)
             table.item(i, 6).setText(speed)
             table.item(i, 7).setText(torque)
+            table.item(i, 8).setText(acceleration)
 
     def close_device(self):
         return self.worker.submit("close")
