@@ -594,7 +594,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
 (rad/s)</string></property></column>
            <column><property name="text"><string>重力矩
 (N·m)</string></property></column>
-           <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示实际下发的总力矩（N·m）。持位时悬停可查看双环计算和限幅。</string></property></column>
+           <column><property name="text"><string>电机指令</string></property><property name="toolTip"><string>PV 显示原始电机目标角（rad），MIT 显示实际下发的总力矩（N·m）。</string></property></column>
            <column><property name="text"><string>从端速度
 (rad/s)</string></property><property name="toolTip"><string>从端回传的关节实际速度。</string></property></column>
            <column><property name="text"><string>从端力矩
@@ -797,18 +797,6 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
            <property name="enabled"><bool>false</bool></property>
            <property name="text"><string>开启阻抗力反馈</string></property>
            <property name="toolTip"><string>六轴 MIT 重力补偿开启后，关节反馈力矩 = 刚度 × 最短角差 + 阻尼 × 滤波后的角速度差。角差和速度差均取从端减主端，各轴单独限幅，上限为 0 时关闭该轴力反馈。启用跟随限制时，从端退出跟随会自动关闭力反馈并禁用此按钮。</string></property>
-          </widget>
-         </item>
-         <item row="1" column="4">
-          <widget class="QPushButton" name="pidTuneButton">
-           <property name="text"><string>单轴调参</string></property>
-          </widget>
-         </item>
-         <item row="1" column="5">
-          <widget class="QPushButton" name="pidHoldButton">
-           <property name="enabled"><bool>false</bool></property>
-           <property name="text"><string>开启双环持位</string></property>
-           <property name="toolTip"><string>锁存当前六轴 MIT 反馈位置。退出持位后继续重力补偿及已开启的力反馈。</string></property>
           </widget>
          </item>
          <item row="3" column="0"><widget class="QPushButton" name="clearButton"><property name="text"><string>整臂清错</string></property><property name="enabled"><bool>false</bool></property></widget></item>

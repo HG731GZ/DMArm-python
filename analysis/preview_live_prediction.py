@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import main as settings
-from ArmController import ArmController, HoldParameters
-from DMMotor import DMMotor, Feedback, MOTOR_MODELS
+from ArmController import ArmController
+from DMMotor import Feedback
 from FreeSpacePredictor import FreeSpaceParameters
 from Robot_UR import ArmModel, Robot_UR
 from TeleopLog import CSV_COLUMNS, TeleopSample
@@ -36,11 +36,8 @@ def main():
     p = FreeSpaceParameters(settings.FREE_SPACE_SPEED_LIMIT_RAD_S, settings.FREE_SPACE_ACCEL_POSITIVE_RAD_S2,
                             settings.FREE_SPACE_ACCEL_NEGATIVE_RAD_S2, settings.FREE_SPACE_BRAKING_RAD_S2,
                             settings.FREE_SPACE_DELAY_S, settings.FREE_SPACE_STEP_S)
-    motors = [DMMotor(i + 1, model, limit) for i, (model, limit) in enumerate(
-        zip(MOTOR_MODELS, settings.MOTOR_OUTPUT_TORQUE_LIMIT_NM))]
     arm_model = ArmModel.from_urdf(settings.ARM_MODEL_URDF)
     ctl = ArmController(settings.UR_HOME_RAD, settings.GRAVITY_GAIN, settings.GRAVITY_AXES,
-                        HoldParameters(**settings.hold_settings()), motors,
                         arm_model=arm_model, gravity_data=arm_model.model.createData(),
                         force_stiffness=settings.FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                         force_damping=settings.FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
@@ -87,9 +84,9 @@ def main():
                                       float(raw[f"master_j{i}_motor_torque_nm"][k]), 0, 0,
                                       int(raw[f"master_j{i}_motor_status"][k])) for i in range(1, 7))
             begin = perf_counter()
-            ctl.update_velocity_error(feedback, frame.dq, float(now), ctl.hold.max_dt)
+            ctl.update_velocity_error(feedback, frame.dq, float(now), settings.FORCE_FEEDBACK_MAX_AGE_S)
             if args.prediction and frame.received >= history[0].sent_at:
-                ctl.update_prediction(feedback, frame, tuple(history), float(now), ctl.hold.max_dt)
+                ctl.update_prediction(feedback, frame, tuple(history), float(now), settings.FORCE_FEEDBACK_MAX_AGE_S)
                 ready_rows += 1
             if not args.prediction or ctl.prediction_observation is not None:
                 torque[k] = ctl.impedance_torque(feedback, frame.q) * Robot_UR.ratio

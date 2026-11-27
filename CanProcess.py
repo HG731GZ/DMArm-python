@@ -72,7 +72,7 @@ class CanSession:
         self.guard_until = None
         self.sequence = self.cycles = self.rounds = 0
         self.hz = self.next_send = 0.0
-        self.active = self.previous_batch = self.trip = None
+        self.active = self.trip = None
         self.owned = set()
         self.streaming = False
         self.coherent = True
@@ -153,9 +153,7 @@ class CanSession:
             self.hz = (self.cycles - self.rate_cycles) / elapsed
             self.rate_start, self.rate_cycles = finished, self.cycles
         self.next_send = finished + self.delay
-        previous = self.previous_batch
-        self.previous_batch = sent, finished - sent, with_tool
-        return sent, with_tool, previous
+        return with_tool
 
     def disarm(self, nodes, coherent, log):
         result = self.bus.disable_nodes(nodes, coherent, log)
@@ -216,14 +214,7 @@ class CanSession:
             bus.write_modes(*args, self.check_cycle, logs.append)
             self.coherent = True
         elif op == "stop":
-            final, = args
             bus.backend.clear_transmit_queue()
-            if final:
-                bus.exchange(list(final.values()), dict.fromkeys(final, Read.STATUS), self.check_epoch)
-                for n in final:
-                    fb = bus.motors[n].feedback
-                    if fb.status != 1:
-                        raise ZlgError(f"ID {n} 停发交接时回读 {fb.status_text}")
             self.streaming = False
             self.guard_until = None
         elif op == "receive":
@@ -258,7 +249,7 @@ class CanSession:
                 self.request_epoch = epoch
                 if op != "cycle":
                     # 模式寄存器、停发及读写操作独占总线，旧模式指令到此作废。
-                    self.active = self.previous_batch = completed = None
+                    self.active = completed = None
                     logs = []
                     try:
                         value = self.manage(op, args, logs)
@@ -285,8 +276,8 @@ class CanSession:
                     self.accept(command)
                     if not wait_applied and completed is not None:
                         # 回送上一轮的实际反馈，控制端可在本批收发期间并行准备下批。
-                        batch, image = completed
-                        self.reply("ok", batch, image=image)
+                        with_tool, image = completed
+                        self.reply("ok", with_tool, image=image)
                         needs_reply = False
                 self.check_cycle("周期调度时")
                 now = perf_counter()
@@ -298,12 +289,12 @@ class CanSession:
                     else:
                         sleep(max(0., until - now))
                     continue
-                batch = self.exchange_cycle()
+                with_tool = self.exchange_cycle()
                 image = self.image()
-                completed = batch, image
+                completed = with_tool, image
                 self.latest.publish(image)
                 if awaiting and needs_reply:
-                    self.reply("ok", batch, image=image)
+                    self.reply("ok", with_tool, image=image)
             except OperationInterrupted:
                 self.active = completed = None
                 if awaiting and needs_reply:
@@ -472,8 +463,8 @@ class CanProcessBus:
         frames = tuple((n, self.motors[n].mode, frame) for n, frame in sorted(targets.items()))
         command = CycleCommand(self.sequence, sampled_at, expires_at, perf_counter(), frames)
         previous, self.submitted = self.submitted, command
-        batch = self.request("cycle", (command, wait_applied))
+        with_tool = self.request("cycle", (command, wait_applied))
         self.confirmed = command if self.applied == command.sequence else previous
         if self.confirmed is None or self.confirmed.sequence != self.applied:
             raise ZlgError("周期反馈与已投递的命令序号不符")
-        return batch
+        return with_tool

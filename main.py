@@ -4,18 +4,16 @@ from math import degrees, isnan, pi
 from datetime import datetime
 from pathlib import Path
 import sys
-from time import perf_counter
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from ArmController import ArmController, HoldParameters
+from ArmController import ArmController
 from FreeSpacePredictor import FreeSpaceParameters
 from Robot_UR import ArmModel, Robot_UR
 from ui_Form1 import Ui_Form1
 from ui_ZeroDialog import Ui_ZeroDialog
-from CanWorker import ALL, JOINTS, CanWorker, TuneLimits
+from CanWorker import ALL, JOINTS, CanWorker
 from CanProcess import CanProcessBus
-from PidTuneDialog import PidTuneDialog
 from DMMotor import LIMITS, MOTOR_MODELS
 from TeleopLog import TeleopLog
 from TeleopPublisher import TeleopPublisher
@@ -54,8 +52,9 @@ FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW = True  # True 时从端 teleop_state 为 0
 # J1～J6 反馈先合成弹簧和阻尼，再按关节侧上限限幅。
 FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD = (40.0, 40.0, 40.0, 15.0, 15.0, 15.0)  # 关节刚度，单位 N·m/rad
 FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD = (0.10, 0.10, 0.10, 0.05, 0.05, 0.05)  # 主端本地阻尼，力矩为负系数乘实测关节速度，单位 N·m·s/rad
+FORCE_FEEDBACK_MAX_AGE_S = 0.05  # 力反馈使用的完整六轴采样时限，单位 s
 FORCE_FEEDBACK_VELOCITY_FILTER_S = 0.010  # 日志中速度差的一阶低通时间常数，单位 s；本地阻尼直接使用主端实测速度
-# J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼，不影响重力补偿或持位。
+# J1～J6 关节侧反馈分量的对称上限，单位 N·m；0 关闭该轴的弹簧和阻尼。
 FORCE_FEEDBACK_LIMIT_NM = (6, 6, 6, 2, 2, 2)
 
 # True 时预测按权重抵消原始主从弹簧，最多抵消到零。False 时使用原始弹簧。两种模式均另加主端本地阻尼。
@@ -69,41 +68,10 @@ FREE_SPACE_BRAKING_RAD_S2 = (8.559878, 6.437806, 6.325182, 11.855675, 11.749363,
 FREE_SPACE_DELAY_S = (0.057, 0.072, 0.074, 0.034, 0.034, 0.034)  # 含显式加减速模型的等效滞后，s
 FREE_SPACE_STEP_S = 0.0025  # 预测器固定积分步长，s；与离线回放保持一致
 
-# 双环参数按 J1～J6 排列。J1、J2 沿用 J3 负向 0.5° 阶跃的初调参数，J4、J5 沿用 J6 的初调参数。
-HOLD_POS_KP = (8.0, 8.0, 8.0, 5.5, 5.5, 5.5)  # 位置环比例，单位 1/s
-HOLD_POS_KI = (0.0,) * 6  # 位置环积分，单位 1/s²
-HOLD_POS_KD = (0.0,) * 6  # 位置环速度反馈增益，无量纲
-HOLD_VEL_KP = (8.0, 8.0, 8.0, 1.8, 1.8, 1.8)  # 速度环比例，单位 N·m·s/rad
-HOLD_VEL_KI = (10.0, 10.0, 10.0, 2.0, 2.0, 2.0)  # 速度环积分，单位 N·m/rad
-HOLD_VEL_KD = (0.0,) * 6  # 速度环加速度反馈增益，单位 N·m·s²/rad
 # 六关节 MIT 指令的软件力矩上限取各自协议 T_MAX 的 95%，单位 N·m。
 MOTOR_OUTPUT_TORQUE_LIMIT_NM = tuple(0.95 * LIMITS[model][2] for model in MOTOR_MODELS[:6])
-# PID 分量取各轴软件总上限的 50%，单位 N·m；叠加重力前馈后再限制总力矩。
-HOLD_PID_TORQUE_LIMIT_NM = tuple(0.5 * limit for limit in MOTOR_OUTPUT_TORQUE_LIMIT_NM)
-HOLD_SPEED_LIMIT_RAD_S = (0.1,) * 6  # 位置环目标速度上限，单位 rad/s
-HOLD_TORQUE_RATE_NM_S = (4.0, 4.0, 4.0, 12.0, 12.0, 12.0)  # 合成力矩变化率上限，单位 N·m/s
-HOLD_POS_I_LIMIT_RAD_S = (0.0,) * 6  # 位置环积分项上限，单位 rad/s
-HOLD_VEL_I_LIMIT_NM = (1.30, 1.30, 1.30, 0.10, 0.10, 0.10)  # 速度环积分项上限，单位 N·m
-HOLD_D_FILTER_S = 0.02  # 加速度低通时间常数，单位 s
-HOLD_MAX_DT_S = 0.05  # 完整六轴反馈时限，单位 s；联调时按含夹钳轮的实测周期填写
 UR_HOME_RAD = (-pi/2, -pi/2, -pi/2, -pi/2, pi/2, 0)  # DH 预设关节角，单位 rad
 PV_SPEED_LIMIT_RAD_S = 0.5  # PV 位置指令的速度上限，单位 rad/s
-
-# 按 J1～J6 的原始电机坐标配置。绝对目标区间取各型号现用位置量程，单位 °。
-TUNE_STEP_LIMIT_DEG = (30.0,) * 6  # 距本次原位的最大阶跃幅度，单位 °
-TUNE_TRAVEL_DEG = tuple((-degrees(LIMITS[m][0]), degrees(LIMITS[m][0])) for m in MOTOR_MODELS[:6])
-TUNE_LOCK_ERROR_DEG = 0.5  # 其余五轴 PV 就位及运行偏差容差，单位 °
-TUNE_SETTLE_BAND_DEG = 0.1  # 回稳绝对位置误差带，单位 °
-TUNE_SETTLE_TIME_S = 0.25  # 误差连续处于回稳带内的最短时间，单位 s
-TUNE_TAIL_TIME_S = 0.5  # 末段平均位置误差的时间窗，单位 s
-
-
-def hold_settings():
-    return dict(pos_kp=HOLD_POS_KP, pos_ki=HOLD_POS_KI, pos_kd=HOLD_POS_KD,
-                vel_kp=HOLD_VEL_KP, vel_ki=HOLD_VEL_KI, vel_kd=HOLD_VEL_KD,
-                pid_limit=HOLD_PID_TORQUE_LIMIT_NM, speed_limit=HOLD_SPEED_LIMIT_RAD_S,
-                torque_rate=HOLD_TORQUE_RATE_NM_S, pos_i_limit=HOLD_POS_I_LIMIT_RAD_S,
-                vel_i_limit=HOLD_VEL_I_LIMIT_NM, filter_s=HOLD_D_FILTER_S, max_dt=HOLD_MAX_DT_S)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -151,14 +119,6 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.pvButton.clicked.connect(lambda: self.command("pv"))
         ui.gravityButton.clicked.connect(self.toggle_gravity)
         ui.forceFeedbackButton.clicked.connect(self.toggle_force_feedback)
-        ui.pidHoldButton.clicked.connect(self.toggle_hold)
-        self.tune_limits = TuneLimits(TUNE_STEP_LIMIT_DEG, TUNE_TRAVEL_DEG, TUNE_LOCK_ERROR_DEG)
-        self.tune_dialog = PidTuneDialog(self, self.tune_limits, hold_settings(),
-                                         TUNE_SETTLE_BAND_DEG, TUNE_SETTLE_TIME_S, TUNE_TAIL_TIME_S,
-                                         tuple(g * on for g, on in zip(GRAVITY_GAIN, GRAVITY_AXES)),
-                                         tuple(min(t, LIMITS[m][2]) for t, m in
-                                               zip(MOTOR_OUTPUT_TORQUE_LIMIT_NM, MOTOR_MODELS)))
-        ui.pidTuneButton.clicked.connect(self.open_tuning)
         ui.homeButton.clicked.connect(lambda: self.command("home"))
         ui.toolMitButton.clicked.connect(lambda: self.command("tool_mit"))
         ui.toolPvtButton.clicked.connect(lambda: self.command("tool_pvt"))
@@ -281,8 +241,8 @@ class MainWindow(QtWidgets.QMainWindow):
         publish_ready = bool(link and self.publisher.master_ready(state))
         self.ui.publishMaster.setEnabled(publish_ready or publishing)
         active = bool(state and state.remote_action)
-        ready = bool(state and link and link.fresh() and not state.tune_node and state.streaming
-                     and state.hold_state == "空闲" and state.coherent and not state.busy
+        ready = bool(state and link and link.fresh() and state.streaming
+                     and state.coherent and not state.busy
                      and not state.uncertain and not state.faulted and set(JOINTS) <= state.owned)
         self.ui.syncButton.setEnabled(ready and not active)
         self.ui.followButton.setEnabled(active or ready)
@@ -299,15 +259,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.command("force_off")
         else:
             self.command("force_on", (self.udp,))
-
-    def toggle_hold(self):
-        self.command("hold_off" if self.worker.state.hold_state == "持位" else "hold_on")
-
-    def open_tuning(self):
-        self.tune_dialog.show()
-        self.refresh()
-        self.tune_dialog.raise_()
-        self.tune_dialog.activateWindow()
 
     def toggle_lock(self, node):
         mode, _ = self.worker.state.motors[node - 1]
@@ -334,12 +285,10 @@ class MainWindow(QtWidgets.QMainWindow):
             device = USBCANFD(ZLG_SDK_DIR_WIN, ZLG_SDK_DIR_LINUX, CANFD_DEVICE_INDEX, CANFD_CHANNEL_INDEX,
                               QUERY_TIMEOUT_S, joint_torque_limits=MOTOR_OUTPUT_TORQUE_LIMIT_NM)
             bus = CanProcessBus(device, CAN_CYCLE_DELAY_S, TOOL_UPDATE_CYCLES, CAN_COMMAND_MAX_AGE_S)
-            hold = HoldParameters(**hold_settings())
             prediction = FreeSpaceParameters(FREE_SPACE_SPEED_LIMIT_RAD_S, FREE_SPACE_ACCEL_POSITIVE_RAD_S2,
                                              FREE_SPACE_ACCEL_NEGATIVE_RAD_S2, FREE_SPACE_BRAKING_RAD_S2,
                                              FREE_SPACE_DELAY_S, FREE_SPACE_STEP_S)
-            controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold,
-                                       [bus.motors[n] for n in JOINTS],
+            controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES,
                                        arm_model=self.arm_model, gravity_data=self.arm_model.model.createData(),
                                        force_stiffness=FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                                        force_damping=FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
@@ -348,17 +297,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                        force_prediction_enabled=FORCE_FEEDBACK_PREDICTION_ENABLED,
                                        force_prediction_weight=FORCE_FEEDBACK_PREDICTION_WEIGHT,
                                        free_space_parameters=prediction)
+            self.worker = CanWorker(
+                bus, self.ui.listenOnly.isChecked(), speed_limit=PV_SPEED_LIMIT_RAD_S,
+                pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
+                force_feedback_max_age=FORCE_FEEDBACK_MAX_AGE_S,
+                force_requires_slave_follow=FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW,
+                controller=controller, slave_link=self.udp,
+            )
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
             return
-        self.worker = CanWorker(
-            bus, self.ui.listenOnly.isChecked(), speed_limit=PV_SPEED_LIMIT_RAD_S,
-            pose_period=POSE_PERIOD_S, queued_cycles=CANFD_USE_TX_QUEUE,
-            force_requires_slave_follow=FORCE_FEEDBACK_REQUIRES_SLAVE_FOLLOW,
-            controller=controller,
-            tune_limits=self.tune_limits,
-            slave_link=self.udp,
-        )
         self.ui.frameLog.clear()
         self.worker.start()
         self.timer.start()
@@ -368,9 +316,8 @@ class MainWindow(QtWidgets.QMainWindow):
         worker = self.worker
         if worker is None:
             self.refresh_udp()
-            self.tune_dialog.refresh(None, (), False)
             return
-        state, messages, points = worker.snapshot()
+        state, messages = worker.snapshot()
         self.refresh_udp(state)
         if messages:
             self.ui.frameLog.appendPlainText("\n".join(messages))
@@ -400,25 +347,16 @@ class MainWindow(QtWidgets.QMainWindow):
         ui.sendButton.setText("停止发送" if state.streaming else "开始发送")
         ui.sendButton.setEnabled((control and state.streaming) or (ready and state.owned == set(ALL)))
         powered = ready and state.coherent and state.owned == set(ALL)
-        free = state.hold_state == "空闲" and not state.tune_node
         for btn in (ui.mitButton, ui.pvButton):
-            btn.setEnabled(free and ((idle and set(JOINTS) <= state.verified) or powered))
+            btn.setEnabled((idle and set(JOINTS) <= state.verified) or powered)
         can_zero = ready and state.coherent and state.first_read and not (state.streaming or state.tracking)
-        ui.zeroButton.setEnabled(can_zero and not state.tune_node)
+        ui.zeroButton.setEnabled(can_zero)
         if self.zero_dialog.isVisible() and not can_zero:
             self.zero_dialog.reject()
         active = ready and state.streaming and state.coherent
         six_active = active and set(JOINTS) <= state.owned
         modes = [mode for mode, _ in state.motors[:6]]
-        hold_ready = (six_active and not state.remote_action and all(m == "MIT" for m in modes)
-                      and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= HOLD_MAX_DT_S)
-        tune_ready = (six_active and free and worker.queued_cycles and not state.remote_action
-                      and all(m in ("MIT", "PV") for m in modes)
-                      and perf_counter() - state.joint_sample_at <= HOLD_MAX_DT_S)
-        self.tune_dialog.refresh(state, points, tune_ready)
-        ui.pidHoldButton.setEnabled(not state.tune_node and ((free and hold_ready) or (ready and state.hold_state == "持位")))
-        ui.pidHoldButton.setText({"空闲": "开启双环持位", "持位": "退出持位", "退出中": "退出中"}[state.hold_state])
-        ui.gravityButton.setEnabled(free and six_active)
+        ui.gravityButton.setEnabled(six_active)
         ui.gravityButton.setText("关闭重力补偿" if state.gravity else "开启重力补偿")
         force_frame = self.udp.fresh() if self.udp else None
         ui.forceFeedbackButton.setEnabled(
@@ -426,17 +364,15 @@ class MainWindow(QtWidgets.QMainWindow):
             and (state.force_feedback or (force_frame is not None and worker.can_reflect_force(state)))
         )
         ui.forceFeedbackButton.setText("关闭阻抗力反馈" if state.force_feedback else "开启阻抗力反馈")
-        ui.homeButton.setEnabled(free and six_active)
+        ui.homeButton.setEnabled(six_active)
         for button in (ui.toolMitButton, ui.toolPvtButton):
             button.setEnabled(idle and 7 in state.verified)
         for node, button, mode, value in zip(JOINTS, self.lock_buttons, modes, state.commands):
-            button.setEnabled(free and powered and mode in ("MIT", "PV"))
+            button.setEnabled(powered and mode in ("MIT", "PV"))
             button.setText(f"J{node} 释放" if mode == "PV" and node in state.owned else f"J{node} 锁定")
             unit = "rad" if mode == "PV" else "N·m"
             item = ui.anglesTable.item(node - 1, 5)
             item.setText("—" if value is None else f"{value:.3f} {unit}")
-            axis = state.hold_details[node - 1] if state.hold_details else None
-            self.show_hold_axis(item, axis)
         if alive and state.uncertain:
             ui.deviceStatus.setText("失能未确认")
         elif state.faulted:
@@ -450,26 +386,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker = None
             if self.closing_window:
                 QtCore.QTimer.singleShot(0, self.close)
-
-    @staticmethod
-    def show_hold_axis(item, axis):
-        if axis is None:
-            if item.toolTip():
-                item.setToolTip("")
-                item.setBackground(QtGui.QBrush())
-            return
-        flags = [name for name, reached in (("PID 限幅", axis.pid_limited), ("电机上限", axis.output_limited),
-                                             ("变化率受限", axis.rate_limited)) if reached]
-        lines = []
-        if axis.target is not None:
-            lines.extend((f"锁存角 {axis.target:.4f} rad　位置误差 {axis.error:.4f} rad",
-                          f"目标速度 {axis.velocity_ref:.4f} rad/s"))
-        if axis.reflection:
-            lines.append(f"电机侧力反馈 {axis.reflection:+.4f} N·m")
-        lines.extend((f"重力前馈 {axis.gravity:.4f} N·m", f"PID 原始 / 限幅后 {axis.pid_raw:.4f} / {axis.pid:.4f} N·m",
-                      f"电机有效上限 ±{axis.output_limit:.4f} N·m", "、".join(flags) if flags else "未受限"))
-        item.setToolTip("\n".join(lines))
-        item.setBackground(QtGui.QBrush(QtGui.QColor("#ffe3a6")) if flags else QtGui.QBrush())
 
     def show_feedback(self, motors):
         joints = [fb for _, fb in motors[:6]]

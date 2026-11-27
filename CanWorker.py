@@ -2,15 +2,13 @@
 
 from collections import deque
 from dataclasses import dataclass, replace
-from math import ceil, degrees, isfinite, radians
-from statistics import median
+from math import degrees, isfinite
 from threading import Condition, Thread
 from time import monotonic, perf_counter
 
-from ArmController import HOLD_FIELDS, PredictionObservation
+from ArmController import PredictionObservation
 from CanProcess import CanProcessLost
 from DMMotor import MODE_NAMES, Read
-from PidTuneSample import TunePoint
 from USBCANFD import OperationInterrupted
 from zlgcan import ZlgError
 
@@ -34,20 +32,6 @@ class JointSample:
 
 
 @dataclass(frozen=True)
-class TuneLimits:
-    step_deg: tuple
-    travel_deg: tuple
-    lock_deg: float
-
-    def __post_init__(self):
-        if (len(self.step_deg) != 6 or len(self.travel_deg) != 6
-                or any(not isfinite(v) or v < 0 for v in self.step_deg)
-                or any(not (isfinite(a) and isfinite(b) and a < b) for a, b in self.travel_deg)
-                or not isfinite(self.lock_deg) or self.lock_deg <= 0):
-            raise ValueError("请检查六轴调参幅度、角度区间及 PV 锁定容差（°）")
-
-
-@dataclass(frozen=True)
 class Snapshot:
     opened: bool
     busy: bool
@@ -63,8 +47,6 @@ class Snapshot:
     force_prediction_enabled: bool
     force_prediction_weight: tuple[float, ...] | None
     prediction: PredictionObservation | None
-    hold_state: str
-    hold_details: tuple
     joint_sample_at: float
     command_until: float
     commands: tuple
@@ -80,28 +62,17 @@ class Snapshot:
     hz: float
     feedback_at: float
     remote_action: str
-    tune_node: int | None
-    tune_phase: str
-    tune_origin: float | None
-    tune_locks: tuple
-    tune_parameters: tuple
-    tune_revision: int
 
 
 class CanWorker(Thread):
-    def __init__(self, bus, listen_only, speed_limit, pose_period, *, queued_cycles,
-                 force_requires_slave_follow=True, controller=None, tune_limits=None, slave_link=None):
+    def __init__(self, bus, listen_only, speed_limit, pose_period, *, queued_cycles, force_feedback_max_age,
+                 force_requires_slave_follow=True, controller=None, slave_link=None):
         super().__init__(name="DMArm-Control")
         self.bus = bus
         self.controller = controller
-        self.tune_limits = tune_limits
-        self.tune_points = deque(maxlen=16384)
-        self.tune_point = None
-        self.tune_parameters = self.parameter_columns()
-        self.tune_revision = 0
-        self.clear_tuning()
-        self.periods = deque(maxlen=16384)
-        self.previous_batch = None
+        if not isfinite(force_feedback_max_age) or force_feedback_max_age <= 0:
+            raise ValueError("力反馈六轴采样时限须为正的有限秒数")
+        self.force_feedback_max_age = force_feedback_max_age
         self.remote_link = None
         self.remote_action = ""
         self.remote_frame = None
@@ -113,8 +84,6 @@ class CanWorker(Thread):
         self.force_output_pending = False
         self.commands = {}
         self.joint_sample = None
-        self.last_hold_sample_at = None
-        self.last_torque = {}
         self.listen_only = listen_only
         self.tracking = False
         self.pose_period = pose_period
@@ -141,9 +110,6 @@ class CanWorker(Thread):
         if not self.streaming:
             self.observe_idle_velocities()
         with self.cv:
-            if self.tune_point is not None:
-                self.tune_points.append(self.tune_point)
-                self.tune_point = None
             # 滤波器会原地更新数组，发布快照时复制六轴数值供异步记录。
             velocity_error = self.controller.filtered_velocity_error if self.controller is not None else None
             local_damping = self.controller.local_damping_torque if self.controller is not None else None
@@ -157,8 +123,6 @@ class CanWorker(Thread):
                 bool(self.controller and self.controller.force_prediction_enabled),
                 tuple(self.controller.force_prediction_weight) if self.controller else None,
                 self.controller.prediction_observation if self.controller else None,
-                self.controller.hold_state if self.controller else "空闲",
-                self.controller.details if self.controller else (),
                 self.joint_sample.oldest_at if self.joint_sample else 0.0,
                 self.bus.confirmed.expires_at if self.bus.applied else 0.0,
                 tuple(self.commands.get(n) for n in JOINTS), self.tracking, self.coherent, self.faulted,
@@ -166,22 +130,14 @@ class CanWorker(Thread):
                 self.message, self.bus.tx, self.bus.rx, self.bus.failed, self.bus.cycles,
                 self.bus.hz if self.streaming else 0.0,
                 min(m.feedback_at for m in self.bus.motors.values()), self.remote_action,
-                self.tune_node, self.tune_phase, self.tune_origin, self.tune_locks,
-                self.tune_parameters, self.tune_revision,
             )
 
     def snapshot(self):
         with self.cv:
             messages = tuple(self.events)
             self.events.clear()
-            points = self.tune_points
-            if points:
-                # 从生产者摘下整批，界面消化积压样本时工作线程可立即追加下一拍。
-                self.tune_points = deque(maxlen=points.maxlen)
-            else:
-                points = ()
             state = replace(self.state, busy=bool(self.current or self.pending))
-        return state, messages, tuple(points)
+        return state, messages
 
     def latest_state(self):
         state = self.state
@@ -218,7 +174,7 @@ class CanWorker(Thread):
                 return False
             if self.current and priority <= PRIORITY.get(self.current, 0):
                 return False
-            self.pending = (action, (self.joint_sample,) if action == "hold_on" else tuple(nodes))
+            self.pending = (action, tuple(nodes))
             if priority:
                 self.bus.interrupt()
             self.cv.notify()
@@ -271,8 +227,6 @@ class CanWorker(Thread):
         self.owned.difference_update(result.nodes - result.uncertain)
         self.uncertain.difference_update(result.nodes)
         self.uncertain.update(result.uncertain)
-        self.finish_hold()
-        self.clear_tuning()
         if self.uncertain:
             self.report(f"失能未确认 {sorted(self.uncertain)}；请支撑并物理停机")
             return False
@@ -340,269 +294,20 @@ class CanWorker(Thread):
         self.report(f"周期发送 {sorted(self.targets)} · {mode}")
 
     def invalidate_sample(self):
-        with self.cv:
-            self.joint_sample = None
-        self.last_torque.clear()
+        self.joint_sample = None
         self.reset_velocity_filter()
 
-    def parameter_columns(self):
-        return tuple(tuple(getattr(self.controller.hold, name)) for name in HOLD_FIELDS) if self.controller else ()
-
-    def clear_tuning(self):
-        self.tune_node = None
-        self.tune_phase = ""
-        self.tune_origin = None
-        self.tune_locks = ()
-        self.tune_draft = None
-        self.previous_parameters = None
-        self.tune_event = ""
-        self.confirmed_target = None
-        self.exit_reason = ""
-
-    def start_tuning(self, node):
-        sample = self.joint_sample
-        if node not in JOINTS or not self.tune_limits:
-            self.report("未配置此轴的调参范围")
-            return
-        if not (self.streaming and self.queued_cycles and self.bus.started and not self.listen_only
-                and self.coherent and not self.faulted and not self.uncertain and set(JOINTS) <= self.owned
-                and all(self.bus.motors[n].mode in (1, 2) for n in JOINTS)):
-            self.report("调参需要已核对 MIT/PV 模式的六轴使能反馈及 CAN FD 队列发送")
-            return
-        if self.remote_action or self.controller.hold_state != "空闲" or self.tune_node:
-            self.report("请先结束当前调参、整臂持位或遥操作")
-            return
-        if (not sample or perf_counter() - sample.oldest_at > self.controller.hold.max_dt
-                or any(f.status != 1 for f in sample.feedback)):
-            self.report("六轴完整使能反馈已过期或缺失")
-            return
-        self.tune_node = node
-        self.gravity_before_tuning = self.controller.gravity_on
-        self.tune_phase = "等待 PV 锁定"
-        self.tune_locks = tuple(f.position for f in sample.feedback)
-        switching = tuple(n for n in JOINTS if self.bus.motors[n].mode != 2)
-        self.set_positions({n: self.tune_locks[n-1] for n in JOINTS if n not in switching})
-        if switching:
-            self.write_modes(2, switching)
-            self.set_positions({n: self.tune_locks[n-1] for n in switching})
-        self.report(f"准备 J{node} 调参，等待六轴 PV 首批应答")
-
-    def end_tuning(self, reason):
-        """另五轴沿用原锁存目标，调参轴在新鲜实测角就地锁定。"""
-        node = self.tune_node
-        self.hold_checkpoint()
-        position = self.joint_sample.feedback[node-1].position
-        self.finish_hold()
-        self.tune_phase = "锁回 PV"
-        self.exit_reason = reason
-        if self.bus.motors[node].mode != 2:
-            self.write_modes(2, (node,))
-        locks = list(self.tune_locks)
-        locks[node-1] = position
-        self.tune_locks = tuple(locks)
-        self.set_positions({node: position})
-        self.report(f"{reason}，等待六轴 PV 控制应答")
-
-    def tune_command(self, action, args):
-        node, *values = args
-        if action == "tune_start":
-            self.start_tuning(node)
-            return
-        if node != self.tune_node:
-            self.report(f"J{node} 当前未在调参")
-            return
-        if action == "tune_end":
-            if self.tune_phase != "锁回 PV":
-                if self.joint_sample is not None:
-                    self.end_tuning("结束本轴调参")
-                else:
-                    self.exit_reason = "结束本轴调参"
-            return
-        if self.tune_phase != "调参中":
-            self.report("请等候调参轴就绪")
-            return
-        if action == "tune_apply":
-            self.tune_draft, = values
-            return
-        delta, = values
-        idx = node - 1
-        target = self.tune_origin + radians(delta)
-        lower, upper = self.tune_limits.travel_deg[idx]
-        span = degrees(self.bus.motors[node].max_position)
-        lower, upper = max(-span, lower), min(span, upper)
-        step = self.tune_limits.step_deg[idx]
-        if not (abs(delta) <= step and radians(lower) <= target <= radians(upper)):
-            self.report(f"J{node} 目标 {degrees(target):.3f}° 越界，允许 [{lower:g}, {upper:g}]°，"
-                        f"阶跃幅度 ±{step:g}°")
-            return
-        self.controller.set_axis_reference(target)
-
-    def advance_tuning(self, sent_at, holding):
-        """仅在当前六轴或七节点控制批次完整确认后推进交接及记录。"""
-        node = self.tune_node
-        idx = node - 1
-        sample = self.joint_sample
-        ctl = self.controller
-        if self.tune_phase == "锁回 PV":
-            ctl.gravity_on = self.gravity_before_tuning
-            self.report(f"{self.exit_reason}，六轴 PV 已确认")
-            self.clear_tuning()
-            return
-        errors = [(abs(sample.feedback[n-1].position - self.tune_locks[n-1]), n) for n in JOINTS if n != node]
-        worst, lock_node = max(errors)
-        if holding:
-            fb = sample.feedback[idx]
-            a = ctl.details[idx]
-            event = self.tune_event
-            if a.target != self.confirmed_target:
-                event = " / ".join(filter(None, ("阶跃" if a.target != self.tune_origin else "回原位", event)))
-            if self.tune_event == "应用参数":
-                self.previous_parameters = None
-                self.tune_parameters = self.parameter_columns()
-                self.tune_revision += 1
-                self.report(f"J{node} 本轴参数已应用")
-            self.tune_point = TunePoint(node, sent_at, sample.times[idx], a.target, fb.position, a.velocity_ref,
-                                        fb.velocity, a.gravity, a.pid_raw, a.pid, self.last_torque[node], fb.torque,
-                                        a.pid_limited, a.output_limited, a.rate_limited, lock_node, worst,
-                                        event, self.confirmed_target)
-            self.confirmed_target = a.target
-            self.tune_event = ""
-        if self.exit_reason:
-            self.end_tuning(self.exit_reason)
-            return
-        if degrees(worst) > self.tune_limits.lock_deg:
-            if self.tune_phase == "等待 PV 锁定":
-                waiting = "、".join(f"J{n}" for e, n in errors if degrees(e) > self.tune_limits.lock_deg)
-                self.message = f"等待 {waiting} 就位，最大偏差 {degrees(worst):.3f}°"
-            else:
-                self.end_tuning(f"J{lock_node} 锁定偏差 {degrees(worst):.3f}° 超限")
-            return
-        if self.tune_phase == "等待 PV 锁定":
-            self.write_modes(1, (node,))
-            motor = self.bus.motors[node]
-            gravity = ctl.gravity_commands(sample.feedback)[idx]
-            torque = max(-motor.output_limit, min(motor.output_limit, gravity))
-            self.targets[node] = motor.command_id, motor.encode_mit(0, 0, torque, 0, 0)
-            ctl.gravity_on = True
-            self.tune_phase = "等待 MIT 首批"
-        elif self.tune_phase == "等待 MIT 首批":
-            self.tune_origin = self.confirmed_target = sample.feedback[idx].position
-            ctl.begin_hold([self.tune_origin], sample.feedback, [self.last_torque[node]], slice(idx, node))
-            self.reset_hold_stats()
-            self.tune_phase = "调参中"
-            self.tune_event = "原位"
-            self.report(f"J{node} 已锁存原位 {degrees(self.tune_origin):.3f}° · 队列发送")
-
-    def begin_hold(self, clicked):
-        ctl = self.controller
-        if (not self.bus.started or self.listen_only or not self.streaming or not self.coherent
-                or self.uncertain or self.faulted or self.remote_action or not set(JOINTS) <= self.owned
-                or any(self.bus.motors[n].mode != 1 for n in JOINTS)):
-            self.report("持位需要可发送通道及六轴 MIT 使能周期，且已结束遥操作")
-            return
-        if clicked is not None and self.bus.applied != self.bus.sequence:
-            # 位置取点击时的样本，积分器从已实际下发并确认的末批力矩接管。
-            self.cycle()
-        sample = self.joint_sample
-        if (clicked is None or sample is None or perf_counter() - clicked.oldest_at > ctl.hold.max_dt
-                or any(f.status != 1 for f in clicked.feedback + sample.feedback)):
-            self.report("点击时的六轴完整使能反馈缺失或已过期，未开启持位")
-            return
-        ctl.begin_hold([f.position for f in clicked.feedback], sample.feedback,
-                       [self.last_torque[n] for n in JOINTS])
-        self.reset_hold_stats()
-        self.report("已锁存六轴原始电机角，双环持位已开启")
-
-    def reset_hold_stats(self):
-        self.last_hold_sample_at = None
-        self.pid_peaks = [0.0] * 6
-        self.command_peaks = [0.0] * 6
-        self.max_hold_dt = 0.0
-        self.periods.clear()
-        self.previous_batch = None
-        self.reported_batches = set()
-
-    def finish_hold(self):
-        if self.controller and self.controller.hold_state != "空闲":
-            if self.previous_parameters is not None:
-                ctl = self.controller
-                ctl.hold = self.previous_parameters
-                i = self.tune_node - 1
-                ctl.speed_limit[i] = min(ctl.hold.speed_limit[i], ctl.motor_speeds[i])
-                self.previous_parameters = None
-            def peaks(values):
-                return "、".join(f"{v:.3f}" for v in values)
-            self.log(f"持位汇总 J1～J6：PID 纠偏绝对峰值 [{peaks(self.pid_peaks)}] N·m，"
-                     f"下发总力矩绝对峰值 [{peaks(self.command_peaks)}] N·m，"
-                     f"最大采样间隔 {self.max_hold_dt * 1000:.2f} ms")
-            self.controller.end_hold()
-            self.last_hold_sample_at = None
-            for tool, label in ((False, "六帧"), (True, "含夹钳")):
-                times = sorted(dt * 1000 for dt, _, has_tool in self.periods if has_tool == tool)
-                if times:
-                    exchange_mean = sum(t for _, t, has_tool in self.periods if has_tool == tool) * 1000 / len(times)
-                    gap_mean = sum(times) / len(times) - exchange_mean
-                    self.log(f"{label}周期采样 {len(times)} 轮，中位 {median(times):.3f} / "
-                             f"P95 {times[ceil(len(times)*0.95)-1]:.3f} / 最大 {times[-1]:.3f} ms，"
-                             f"平均整批收发 {exchange_mean:.3f} / 收齐至下批开始 {gap_mean:.3f} ms")
-            self.previous_batch = None
-
-    def hold_checkpoint(self):
-        self.checkpoint()
-        if perf_counter() - self.joint_sample.oldest_at > self.controller.hold.max_dt:
-            raise ZlgError("双环持位六轴反馈超时")
-
-    def prepare_hold(self, force_torque):
-        self.hold_checkpoint()
-        ctl = self.controller
-        sample = self.joint_sample
-        if self.tune_draft is not None:
-            node = self.tune_node
-            previous = ctl.hold
-            try:
-                ctl.apply_axis_parameters(node-1, self.tune_draft, sample.feedback, self.last_torque[node])
-            except ValueError as error:
-                self.report(f"J{node} 参数未应用：{error}")
-            else:
-                self.previous_parameters = previous
-                self.last_hold_sample_at = None
-                self.tune_event = "应用参数"
-            self.tune_draft = None
-        dt = 0.0
-        if self.last_hold_sample_at is not None:
-            dt = sample.sampled_at - self.last_hold_sample_at
-            if not 0 < dt <= ctl.hold.max_dt:
-                raise ZlgError(f"持位采样间隔异常：{dt * 1000:.2f} ms")
-        commands, goals = ctl.step_hold(sample.feedback, dt, force_torque)
-        self.last_hold_sample_at = sample.sampled_at
-        matched = True
-        for n, torque, goal in zip(JOINTS[ctl.axes], commands, goals):
-            motor = self.bus.motors[n]
-            data = motor.encode_mit(0, 0, torque, 0, 0)
-            self.targets[n] = motor.command_id, data
-            if ctl.hold_state == "退出中" and motor.payload_torque_code(data) != motor.torque_code(goal):
-                matched = False
-        return ctl.hold_state == "退出中" and matched
-
-    def confirm_batch(self, expected, targets):
-        self.check_enabled_feedback(expected)
-        for n in self.joint_feedback:
-            motor = self.bus.motors[n]
-            self.commands[n] = motor.joint_command_value(motor.mode, targets[n][1])
-            if motor.mode == 1:
-                self.last_torque[n] = self.commands[n]
-        self.update_joint_sample()
-
     def confirm_cycle(self, expected):
-        targets = {n: frame for n, _, frame in self.bus.confirmed.targets}
-        self.confirm_batch(expected, targets)
+        self.check_enabled_feedback(expected)
+        for node, mode, (_, data) in self.bus.confirmed.targets:
+            if node in self.joint_feedback:
+                self.commands[node] = self.bus.motors[node].joint_command_value(mode, data)
+        self.update_joint_sample()
 
     def update_joint_sample(self):
         if len(self.joint_feedback) == len(JOINTS):
-            sample = JointSample(tuple(self.bus.motors[n].feedback for n in JOINTS),
-                                 tuple(self.bus.motors[n].feedback_at for n in JOINTS))
-            with self.cv:
-                self.joint_sample = sample
+            self.joint_sample = JointSample(tuple(self.bus.motors[n].feedback for n in JOINTS),
+                                            tuple(self.bus.motors[n].feedback_at for n in JOINTS))
 
     def cycle(self):
         ctl = self.controller
@@ -615,13 +320,9 @@ class CanWorker(Thread):
         link = self.slave_link
         frame = link.fresh() if link is not None else None
         if ctl is not None:
-            self.update_velocity_observation(link, frame, self.joint_sample, ctl.hold.max_dt)
+            self.update_velocity_observation(link, frame, self.joint_sample, self.force_feedback_max_age)
         force_torque = self.force_feedback_torque(link, frame)
-        holding = ctl and ctl.hold_state != "空闲"
-        released = False
-        if holding:
-            released = self.prepare_hold(force_torque)
-        elif ctl and ctl.gravity_on and not self.tune_node and any(motors[n].mode == 1 for n in JOINTS):
+        if ctl and ctl.gravity_on and any(motors[n].mode == 1 for n in JOINTS):
             feedback = tuple(motors[n].feedback for n in JOINTS)
             torques = ctl.gravity_commands(feedback)
             if force_torque is not None:
@@ -632,46 +333,20 @@ class CanWorker(Thread):
                     torque = max(-motor.output_limit, min(motor.output_limit, torques[node - 1]))
                     self.targets[node] = motor.command_id, motor.encode_mit(0, 0, torque, 0, 0)
         expires_at = sampled_at + self.bus.command_max_age
-        if holding or force_torque is not None:
-            expires_at = min(expires_at, sampled_at + ctl.hold.max_dt)
+        if force_torque is not None:
+            expires_at = min(expires_at, sampled_at + self.force_feedback_max_age)
         remote = frame if force_torque is not None else self.remote_frame
         if remote is not None and (force_torque is not None or self.remote_action == "follow"):
             remote_link = self.force_link if force_torque is not None else self.remote_link
             expires_at = min(expires_at, perf_counter() + remote_link.timeout - (monotonic() - remote.received))
         self.checkpoint()
-        wait_applied = bool(holding or self.tune_node or self.current or
-                            (self.force_output_pending and force_torque is None))
+        wait_applied = bool(self.current or (self.force_output_pending and force_torque is None))
         if force_torque is not None:
             self.force_output_pending = True
-        sent_at, has_tool, previous = self.bus.cycle(self.targets, sampled_at, expires_at, wait_applied)
+        has_tool = self.bus.cycle(self.targets, sampled_at, expires_at, wait_applied)
         expected = self.targets if has_tool else self.joint_feedback
         self.confirm_cycle(expected)
         self.force_output_pending = force_torque is not None
-        if holding:
-            self.hold_checkpoint()
-            if has_tool not in self.reported_batches:
-                ids = "、".join(f"0x{self.targets[n][0]:03X}" for n in expected)
-                method = "队列发送" if self.queued_cycles else "直接批发"
-                self.log(f"{method}控制批次 [{ids}]，已确认节点 {list(expected)}")
-                self.reported_batches.add(has_tool)
-            if ctl.hold_state == "持位" and not self.tune_event:
-                if self.previous_batch is not None and previous is not None:
-                    previous_at, duration, had_tool = previous
-                    self.periods.append((sent_at - previous_at, duration, had_tool))
-                self.previous_batch = sent_at
-            else:
-                self.previous_batch = None
-            self.max_hold_dt = max(self.max_hold_dt, self.joint_sample.sampled_at - self.last_hold_sample_at)
-            for n in JOINTS[ctl.axes]:
-                i = n - 1
-                axis = ctl.details[i]
-                self.pid_peaks[i] = max(self.pid_peaks[i], abs(axis.pid))
-                self.command_peaks[i] = max(self.command_peaks[i], abs(self.last_torque[i + 1]))
-            if released:
-                self.finish_hold()
-                self.report("已退出持位，继续重力补偿" + ("及力反馈" if self.force_link else ""))
-        if self.tune_node:
-            self.advance_tuning(sent_at, holding)
 
     def check_enabled_feedback(self, nodes):
         for node in nodes:
@@ -681,24 +356,12 @@ class CanWorker(Thread):
 
     def stop(self):
         self.clear_force_feedback()
-        if self.force_output_pending and self.controller.hold_state == "空闲":
+        if self.force_output_pending:
             self.cycle()
         if self.remote_action:
             self.hold_remote("停止发送")
             self.cycle()
-        holding = self.tune_node or (self.controller and self.controller.hold_state != "空闲")
-        if holding:
-            for node in JOINTS:
-                if self.bus.motors[node].mode == 1:
-                    self.clear_motor_command(node)
-        final = {n: self.targets[n] for n in JOINTS} if holding else {}
-        self.bus.request("stop", (final,))
-        if holding:
-            self.confirm_batch(self.joint_feedback, final)
-            self.force_output_pending = False
-            self.finish_hold()
-            self.clear_tuning()
-            self.controller.gravity_on = False
+        self.bus.request("stop")
         self.streaming = False
         self.invalidate_sample()
         self.report("周期发送已停止，发送队列已清空")
@@ -823,8 +486,8 @@ class CanWorker(Thread):
 
     def can_reflect_force(self, state):
         return (state.opened and state.streaming and state.gravity and state.coherent
-                and not state.uncertain and not state.faulted and not state.tune_node
-                and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= self.controller.hold.max_dt
+                and not state.uncertain and not state.faulted
+                and state.joint_sample_at > 0 and perf_counter() - state.joint_sample_at <= self.force_feedback_max_age
                 and any(self.controller.force_limit)
                 and (not self.controller.force_prediction_enabled or state.prediction is not None)
                 and all(n in state.owned and mode == "MIT" for n, (mode, _) in zip(JOINTS, state.motors)))
@@ -854,7 +517,7 @@ class CanWorker(Thread):
             self.report("从端已退出跟随，阻抗力反馈已关闭")
             return None
         sample = self.joint_sample
-        if sample is None or perf_counter() - sample.oldest_at > self.controller.hold.max_dt:
+        if sample is None or perf_counter() - sample.oldest_at > self.force_feedback_max_age:
             self.clear_force_feedback()
             self.report("主端六轴反馈缺失或已过期，阻抗力反馈已关闭")
             return None
@@ -918,12 +581,6 @@ class CanWorker(Thread):
     def dispatch(self, action, nodes):
         if action in (*PRIORITY, "pose_off"):
             self.tracking = False
-        if action in ("tune_start", "tune_end", "tune_step", "tune_apply"):
-            self.tune_command(action, nodes)
-            return
-        if self.tune_node and action not in PRIORITY:
-            self.report(f"J{self.tune_node} 正在调参，请先结束并锁回 PV")
-            return
         if action == "close":
             try:
                 self.bus.close()
@@ -932,7 +589,6 @@ class CanWorker(Thread):
                 self.report(f"关闭设备失败：{error}")
                 self.done = self.bus.process is None
                 return
-            self.finish_hold()
             self.invalidate_sample()
             self.targets.clear()
             self.commands.clear()
@@ -949,21 +605,6 @@ class CanWorker(Thread):
         if action == "force_off":
             self.clear_force_feedback()
             self.report("力反馈已关闭")
-            return
-        if action == "hold_on":
-            if self.controller.hold_state == "空闲":
-                self.begin_hold(*nodes)
-            else:
-                self.report("双环持位已开启，请先退出持位")
-            return
-        if action == "hold_off":
-            if self.controller.hold_state == "持位":
-                self.controller.begin_release()
-                self.report("正在退出持位，向重力补偿" + ("及力反馈" if self.force_link else "") + "过渡")
-            return
-        if (self.controller and self.controller.hold_state != "空闲" and
-                action in ("gravity_on", "gravity_off", "mit", "pv", "lock", "unlock", "home", "sync", "follow")):
-            self.report("请先退出双环持位，再切换控制方式")
             return
         if self.listen_only or not self.bus.started:
             raise ZlgError("控制操作需要已启动且可发送的通道")
@@ -1130,7 +771,7 @@ class CanWorker(Thread):
                 self.log("普通操作已中断，处理停止请求")
                 # 部分使能或换模未核对时先逐轴失能；模式已知时由待处理的停止操作接管。
                 switching = self.current in ("lock", "unlock", "home", "mit", "pv", "sync", "follow")
-                if self.owned and (self.current == "enable" or ((switching or self.tune_node) and not self.coherent)):
+                if self.owned and (self.current == "enable" or (switching and not self.coherent)):
                     self.disable(self.owned.copy())
                     with self.cv:
                         if self.pending and self.pending[0] == "stop":

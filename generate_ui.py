@@ -8,7 +8,7 @@ import sys
 
 def generate():
     directory = Path(__file__).resolve().parent
-    for name in ("Form1", "ZeroDialog", "PidTuneDialog"):
+    for name in ("Form1", "ZeroDialog"):
         source = subprocess.check_output(
             [sys.executable, "-m", "PyQt5.uic.pyuic", f"{name}.ui"],
             cwd=directory, encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"},
