@@ -10,7 +10,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from ArmController import ArmController, HoldParameters
 from FreeSpacePredictor import FreeSpaceParameters
-from Robot_UR import Robot_UR
+from Robot_UR import ArmModel, Robot_UR
 from ui_Form1 import Ui_Form1
 from ui_ZeroDialog import Ui_ZeroDialog
 from CanWorker import ALL, JOINTS, CanWorker, TuneLimits
@@ -114,7 +114,9 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.ui = ui = Ui_Form1()
         ui.setupUi(self)
-        ui.armView.set_model(ARM_MODEL_URDF, SLAVE_MODEL_OPACITY)
+        self.arm_model = ArmModel.from_urdf(ARM_MODEL_URDF)
+        self.display_data = self.arm_model.model.createData()
+        ui.armView.set_model(ARM_MODEL_URDF, self.arm_model.assembly, SLAVE_MODEL_OPACITY)
         self.last_feedback = None
         self.worker = None
         self.udp = None
@@ -338,6 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              FREE_SPACE_DELAY_S, FREE_SPACE_STEP_S)
             controller = ArmController(UR_HOME_RAD, GRAVITY_GAIN, GRAVITY_AXES, hold,
                                        [bus.motors[n] for n in JOINTS],
+                                       arm_model=self.arm_model, gravity_data=self.arm_model.model.createData(),
                                        force_stiffness=FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                                        force_damping=FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
                                        force_velocity_filter_s=FORCE_FEEDBACK_VELOCITY_FILTER_S,
@@ -470,7 +473,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_feedback(self, motors):
         joints = [fb for _, fb in motors[:6]]
-        model = Robot_UR.from_feedback(joints) if all(joints) else None
+        model = self.arm_model.pose(*Robot_UR.joint_state(joints), self.display_data) if all(joints) else None
         view = self.ui.armView
         view.master = model
         table = self.ui.anglesTable
@@ -502,7 +505,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_slave_frame(self, frame):
         """用同一帧刷新从端姿态、实际速度、关节力矩及实际加速度，断流时清除。"""
-        model = Robot_UR(frame.q, frame.dq) if frame else None
+        model = self.arm_model.pose(frame.q, frame.dq, self.display_data) if frame else None
         self.ui.armView.slave = model
         table = self.ui.anglesTable
         for i in range(6):

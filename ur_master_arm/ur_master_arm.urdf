@@ -493,71 +493,71 @@
   </joint>
   <link name="DH6">
     <inertial>
-      <origin xyz="0.004052910272566 -0.009027346394553 0.03711428231369" rpy="0 0 0" />
-      <mass value="0.2776435129187" />
-      <inertia ixx="0.0002732578478707" iyy="0.0002594690453363" izz="0.0001127469083927" ixy="5.430935827955e-06" ixz="-3.461683791836e-06" iyz="7.799868430634e-06" />
+      <origin xyz="-0.0002897849443499 0.0098911621809034 0.037114282313775" rpy="0 0 0" />
+      <mass value="0.27764351291911" />
+      <inertia ixx="0.00027507877604543" iyy="0.00025764811716458" izz="0.00011274690839283" ixy="-1.0348263360532e-06" ixz="2.1329837998029e-07" iyz="-8.530867834207e-06" />
     </inertial>
     <visual name="DH6_tool_coupler">
-      <origin xyz="1.592907315865e-13 0 -0.0076" rpy="3.14159265359 1.570796326795 0" />
+      <origin xyz="0 0 -0.0076000000000001" rpy="0.39269908169872 1.5707963267949 0" />
       <geometry>
         <mesh filename="meshes/tool_coupler.stl" />
       </geometry>
       <material name="cad_2" />
     </visual>
     <collision name="DH6_tool_coupler_hull">
-      <origin xyz="1.592907315865e-13 0 -0.0076" rpy="3.14159265359 1.570796326795 0" />
+      <origin xyz="0 0 -0.0076000000000001" rpy="0.39269908169872 1.5707963267949 0" />
       <geometry>
         <mesh filename="meshes/tool_coupler_hull.stl" />
       </geometry>
     </collision>
     <visual name="DH6_pendant_frame">
-      <origin xyz="1.593349501299e-13 0 0.0004" rpy="0 0 -2.748893571891" />
+      <origin xyz="0 0 0.00039999999999989" rpy="0 0 0" />
       <geometry>
         <mesh filename="meshes/pendant_frame.stl" />
       </geometry>
       <material name="cad_1" />
     </visual>
     <collision name="DH6_pendant_frame_hull">
-      <origin xyz="1.593349501299e-13 0 0.0004" rpy="0 0 -2.748893571891" />
+      <origin xyz="0 0 0.00039999999999989" rpy="0 0 0" />
       <geometry>
         <mesh filename="meshes/pendant_frame_hull.stl" />
       </geometry>
     </collision>
     <visual name="DH6_pendant_motor">
-      <origin xyz="0.007232716871863 -0.01746132316447 0.0394" rpy="-0.3926990816987 1.570796326795 0" />
+      <origin xyz="0 0.0189 0.039400000000004" rpy="3.1415926535898 1.5707963267948 0" />
       <geometry>
         <mesh filename="meshes/pendant_motor.stl" />
       </geometry>
       <material name="cad_4" />
     </visual>
     <collision name="DH6_pendant_motor_hull">
-      <origin xyz="0.007232716871863 -0.01746132316447 0.0394" rpy="-0.3926990816987 1.570796326795 0" />
+      <origin xyz="0 0.0189 0.039400000000004" rpy="3.1415926535898 1.5707963267948 0" />
       <geometry>
         <mesh filename="meshes/pendant_motor_hull.stl" />
       </geometry>
     </collision>
     <visual name="DH6_pendant_coupler">
-      <origin xyz="1.593349501299e-13 0 0.0004" rpy="-2.356194490192 -1.570796326795 0" />
+      <origin xyz="0 0 0.00039999999999989" rpy="0.39269908169874 -1.5707963267949 0" />
       <geometry>
         <mesh filename="meshes/pendant_coupler.stl" />
       </geometry>
       <material name="cad_2" />
     </visual>
     <collision name="DH6_pendant_coupler_hull">
-      <origin xyz="1.593349501299e-13 0 0.0004" rpy="-2.356194490192 -1.570796326795 0" />
+      <origin xyz="0 0 0.00039999999999989" rpy="0.39269908169874 -1.5707963267949 0" />
       <geometry>
         <mesh filename="meshes/pendant_coupler_hull.stl" />
       </geometry>
     </collision>
     <visual name="DH6_pendant_rotor">
-      <origin xyz="0.00723271687186 -0.01746132316447 0.0394" rpy="0 0.005170975839162 -2.748893571891" />
+      <origin xyz="0 0.0189 0.0394" rpy="0 0.0051709758391625 0" />
       <geometry>
         <mesh filename="meshes/pendant_rotor.stl" />
       </geometry>
       <material name="cad_1" />
     </visual>
     <collision name="DH6_pendant_rotor_hull">
-      <origin xyz="0.00723271687186 -0.01746132316447 0.0394" rpy="0 0.005170975839162 -2.748893571891" />
+      <origin xyz="0 0.0189 0.0394" rpy="0 0.0051709758391625 0" />
       <geometry>
         <mesh filename="meshes/pendant_rotor_hull.stl" />
       </geometry>

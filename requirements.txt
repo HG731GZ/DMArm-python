@@ -1,2 +1,3 @@
+# dmarm 环境的刚体库由 conda 安装：conda install -n dmarm -c conda-forge pinocchio-python=4.1.0
 PyQt5>=5.15,<5.16
 numpy>=1.26,<2.3

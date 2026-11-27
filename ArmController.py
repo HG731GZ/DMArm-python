@@ -82,10 +82,12 @@ class PredictionObservation(NamedTuple):
 
 
 class ArmController:
-    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *,
+    def __init__(self, home, gravity_gain, gravity_axes, hold, motors, *, arm_model, gravity_data,
                  force_stiffness, force_damping, force_velocity_filter_s, force_limit,
                  force_prediction_enabled, force_prediction_weight, free_space_parameters):
         self.home = six_values("预设角", home)
+        self.arm_model = arm_model
+        self.gravity_data = gravity_data
         self.gravity_gain = six_values("重力补偿倍率", gravity_gain)
         self.gravity_axes = six_values("重力补偿轴", gravity_axes)
         self.gravity_on = False
@@ -124,7 +126,7 @@ class ArmController:
 
     def gravity_commands(self, feedback):
         angles = Robot_UR.motor2dh([f.position for f in feedback])
-        return Robot_UR.gravity_at(angles) * self.gravity_gain * self.gravity_axes
+        return self.arm_model.motor_gravity(angles, self.gravity_data) * self.gravity_gain * self.gravity_axes
 
     def reset_velocity_filter(self):
         self.filtered_velocity_error = None

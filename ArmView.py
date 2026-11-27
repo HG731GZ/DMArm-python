@@ -81,9 +81,10 @@ class ArmView(QtWidgets.QOpenGLWidget):
         self.drag_pos = QtCore.QPoint()
         self.reset_camera()
 
-    def set_model(self, urdf_path, slave_opacity):
+    def set_model(self, urdf_path, assembly, slave_opacity):
         """主窗在首次显示前指定两端共用的模型和从端不透明度。"""
         self.arm = ArmMesh(urdf_path)
+        self.assembly = assembly
         self.slave_opacity = slave_opacity
 
     def initializeGL(self):
@@ -161,13 +162,13 @@ class ArmView(QtWidgets.QOpenGLWidget):
 
     def paintGL(self):
         arms = []
-        axes = [(self.arm.assembly[0], WORLD_AXES_M, self.solid_axes)]
+        axes = [(self.assembly[0], WORLD_AXES_M, self.solid_axes)]
         if self.master is not None or self.slave is None:
-            poses = self.arm.assembly if self.master is None else self.arm.link_poses(self.master)
+            poses = self.assembly if self.master is None else self.master.cad_poses
             arms.append((poses, PREVIEW_TINT if self.master is None else MASTER_TINT, 1.0))
             axes.append((poses[-1], END_AXES_M, self.solid_axes))
         if self.slave is not None:
-            poses = self.arm.link_poses(self.slave)
+            poses = self.slave.cad_poses
             arms.append((poses, SLAVE_TINT, self.slave_opacity))
             axes.insert(1, (poses[-1], END_AXES_M, self.dashed_axes))
 

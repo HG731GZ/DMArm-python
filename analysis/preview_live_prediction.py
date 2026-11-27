@@ -18,7 +18,7 @@ import main as settings
 from ArmController import ArmController, HoldParameters
 from DMMotor import DMMotor, Feedback, MOTOR_MODELS
 from FreeSpacePredictor import FreeSpaceParameters
-from Robot_UR import Robot_UR
+from Robot_UR import ArmModel, Robot_UR
 from TeleopLog import CSV_COLUMNS, TeleopSample
 from UdpClass import MasterCommand, SlaveFrame, encode_master
 
@@ -38,8 +38,10 @@ def main():
                             settings.FREE_SPACE_DELAY_S, settings.FREE_SPACE_STEP_S)
     motors = [DMMotor(i + 1, model, limit) for i, (model, limit) in enumerate(
         zip(MOTOR_MODELS, settings.MOTOR_OUTPUT_TORQUE_LIMIT_NM))]
+    arm_model = ArmModel.from_urdf(settings.ARM_MODEL_URDF)
     ctl = ArmController(settings.UR_HOME_RAD, settings.GRAVITY_GAIN, settings.GRAVITY_AXES,
                         HoldParameters(**settings.hold_settings()), motors,
+                        arm_model=arm_model, gravity_data=arm_model.model.createData(),
                         force_stiffness=settings.FORCE_FEEDBACK_STIFFNESS_NM_PER_RAD,
                         force_damping=settings.FORCE_FEEDBACK_DAMPING_NM_S_PER_RAD,
                         force_velocity_filter_s=settings.FORCE_FEEDBACK_VELOCITY_FILTER_S,
