@@ -19,8 +19,9 @@ from ArmController import ArmController
 from DMMotor import Feedback
 from FreeSpacePredictor import FreeSpaceParameters
 from Robot_UR import ArmModel, Robot_UR
-from TeleopLog import CSV_COLUMNS, TeleopSample
-from UdpClass import MasterCommand, SlaveFrame, encode_master
+from TeleopLog import CSV_COLUMNS, TIMING_COLUMNS, TeleopSample
+from UdpClass import MasterCommand, SlaveFrame
+from UdpProtocol import FeedbackTiming, master_payload
 
 
 def main():
@@ -31,7 +32,9 @@ def main():
     parser.add_argument("--weight", type=float, nargs=6, default=settings.FORCE_FEEDBACK_PREDICTION_WEIGHT,
                         help="J1～J6 的预测位置补偿权重，默认读取 main.py")
     args = parser.parse_args()
-    raw = np.genfromtxt(args.source, delimiter=",", names=True, encoding="utf-8-sig",
+    with args.source.open(encoding="utf-8-sig", newline="") as source:
+        numeric = [i for i, name in enumerate(next(csv.reader(source))) if name not in TIMING_COLUMNS]
+    raw = np.genfromtxt(args.source, delimiter=",", names=True, encoding="utf-8-sig", usecols=numeric,
                         missing_values="NULL", filling_values=np.nan)
     p = FreeSpaceParameters(settings.FREE_SPACE_SPEED_LIMIT_RAD_S, settings.FREE_SPACE_ACCEL_POSITIVE_RAD_S2,
                             settings.FREE_SPACE_ACCEL_NEGATIVE_RAD_S2, settings.FREE_SPACE_BRAKING_RAD_S2,
@@ -54,31 +57,40 @@ def main():
     history = deque()
     retention = settings.UDP_TIMEOUT_S + max(p.delay) + 2 * p.step_s
     frame = None
-    previous_wall = None
+    previous_key = None
     torque = np.zeros((len(t), 6))
     original = np.zeros_like(torque)
     elapsed = []
     ready_rows = 0
     evaluated = np.zeros(len(t), dtype=bool)
     args.output.mkdir(parents=True, exist_ok=True)
-    with (args.output / "live_model_preview.csv").open("w", encoding="utf-8-sig", newline="") as output:
+    with args.source.open(encoding="utf-8-sig", newline="") as source, (
+        args.output / "live_model_preview.csv"
+    ).open("w", encoding="utf-8-sig", newline="") as output:
+        # 从原始十进制文本读取会话等整数字段，保留 uint64 的全部有效位。
+        source_rows = csv.DictReader(source)
         writer = csv.writer(output)
         writer.writerow(CSV_COLUMNS)
         for k, now in enumerate(t):
+            src = next(source_rows)
             master_q = groups["master_q_rad"][k]
             master_dq = groups["master_dq_rad_s"][k]
             history.append(MasterCommand(float(now), tuple(master_q)))
             while len(history) > 1 and history[1].sent_at < now - retention:
                 history.popleft()
             wall = raw["slave_received_unix_s"][k]
-            if wall != previous_wall:
+            frame_key = (src["slave_session"], src["fb_seq"]) if "fb_seq" in src else wall
+            if frame_key != previous_key:
+                timing = (FeedbackTiming(*(int(src[name]) for name in FeedbackTiming._fields))
+                          if src.get("t4_us") not in (None, "NULL") else None)
                 received = float(now - (raw["time_unix_s"][k] - wall))
                 frame = SlaveFrame(tuple(groups["slave_q_rad"][k]), int(raw["slave_mode"][k]),
                                    tuple(raw[f"slave_gripper_{field}"][k] for field in ("open", "current_raw", "position_raw")),
                                    tuple(groups["slave_dq_rad_s"][k]), tuple(groups["slave_torque_nm"][k]),
                                    int(raw["slave_teleop_state"][k]), tuple(groups["slave_ddq_rad_s2"][k]),
-                                   received, float(wall), int(raw["slave_generation"][k]))
-                previous_wall = wall
+                                   received, float(wall), int(raw["slave_generation"][k]),
+                                   timing, int(src["t4_us"]) if timing else None)
+                previous_key = frame_key
             feedback = tuple(Feedback(float(raw[f"master_j{i}_motor_position_rad"][k]),
                                       float(raw[f"master_j{i}_motor_velocity_rad_s"][k]),
                                       float(raw[f"master_j{i}_motor_torque_nm"][k]), 0, 0,
@@ -109,8 +121,8 @@ def main():
                 local_damping_torque=tuple(ctl.local_damping_torque),
                 force_prediction_enabled=args.prediction, force_prediction_weight=tuple(ctl.force_prediction_weight),
                 prediction=ctl.prediction_observation)
-            packet = encode_master(master_q, master_dq, float(raw["master_udp_grip_1"][k]))
-            sample = TeleopSample(float(now), float(raw["time_unix_s"][k]), state, packet, frame)
+            payload = master_payload(master_q, master_dq, float(raw["master_udp_grip_1"][k]))
+            sample = TeleopSample(float(now), float(raw["time_unix_s"][k]), state, payload, frame)
             writer.writerow(sample.csv_row(0.))
     dt = np.r_[np.diff(t), 0.] * evaluated
     duration = sum(dt)

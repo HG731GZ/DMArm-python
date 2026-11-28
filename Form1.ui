@@ -1232,7 +1232,7 @@ QHeaderView::section { background: #eaf0f3; padding: 4px; border: none; color: #
           <number>250</number>
          </property>
          <property name="placeholderText">
-          <string>打开设备后显示查询和原始 FD 回包</string>
+          <string>显示 CAN FD 查询、原始回包及主从 UDP 会话记录</string>
          </property>
          <property name="maximumSize">
           <size>

@@ -996,5 +996,5 @@ class Ui_Form1(object):
         self.homeButton.setText(_translate("Form1", "回预设位"))
         self.udpStatus.setText(_translate("Form1", "UDP 未打开"))
         self.monitorGroup.setTitle(_translate("Form1", "CAN FD 收发记录"))
-        self.frameLog.setPlaceholderText(_translate("Form1", "打开设备后显示查询和原始 FD 回包"))
+        self.frameLog.setPlaceholderText(_translate("Form1", "显示 CAN FD 查询、原始回包及主从 UDP 会话记录"))
 from ArmView import ArmView

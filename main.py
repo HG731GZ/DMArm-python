@@ -26,9 +26,9 @@ CANFD_CHANNEL_INDEX = 0  # CAN FD 通道索引，从 0 起
 CANFD_USE_TX_QUEUE = True  # CAN FD 周期发送方式，True 为队列发送，False 为直接批发
 ZLG_SDK_DIR_WIN = PROJECT_DIR / "zlgcan_x64"  # 包含 DLL 和 kerneldlls 的厂商目录
 ZLG_SDK_DIR_LINUX = PROJECT_DIR / "zlgcan_linux_x64"  # Linux x86_64 的厂商运行库目录
-UDP_LOCAL_IP = "192.168.3.5"  # 主端监听地址
+UDP_LOCAL_IP = "192.168.1.5"  # 主端监听地址
 UDP_LOCAL_PORT = 6005  # 主端监听端口
-UDP_REMOTE_IP = "192.168.3.14"  # 从端目的地址
+UDP_REMOTE_IP = "192.168.1.14"  # 从端目的地址
 UDP_REMOTE_PORT = 5005  # 从端目的端口
 UDP_SEND_PERIOD_MS = 5  # 主端命令发送间隔，单位 ms
 UDP_TIMEOUT_S = 1.0  # 从端状态新鲜时限，单位 s；运动联调前按现场确认
@@ -77,6 +77,8 @@ PV_SPEED_LIMIT_RAD_S = 0.5  # PV 位置指令的速度上限，单位 rad/s
 class MainWindow(QtWidgets.QMainWindow):
     teleop_log_message = QtCore.pyqtSignal(str)
     teleop_log_error = QtCore.pyqtSignal(object, str)
+    # 两个 ID 使用 Python 整数传递，保留完整的 64 位。
+    udp_session_changed = QtCore.pyqtSignal(str, object, object)
 
     def __init__(self):
         super().__init__()
@@ -88,6 +90,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_feedback = None
         self.worker = None
         self.udp = None
+        self.last_session_ids = {}
         self.displayed_frame = None
         self.drawn_models = (None, None)
         self.closing_window = False
@@ -137,6 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_fields = (ui.toolValue0, ui.toolValue1, ui.toolValue2, ui.toolValue3,
                             ui.toolValue4, ui.toolValue5, ui.toolValue6, ui.toolValue7)
         self.teleop_log_message.connect(ui.frameLog.appendPlainText)
+        self.udp_session_changed.connect(self.log_udp_session, QtCore.Qt.QueuedConnection)
         self.teleop_log_error.connect(self.log_write_failed)
         self.teleop_log = TeleopLog(PROJECT_DIR / "logs", self.teleop_log_message.emit, self.teleop_log_error.emit)
         self.publisher = TeleopPublisher(UDP_SEND_PERIOD_MS / 1000, QUERY_TIMEOUT_S, TELEOP_LOG_ENABLED,
@@ -164,6 +168,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.udp = UdpClass((UDP_LOCAL_IP, UDP_LOCAL_PORT),
                                 (UDP_REMOTE_IP, self.ui.remotePort.value()), UDP_TIMEOUT_S,
+                                session_changed=self.udp_session_changed.emit,
                                 command_history_s=UDP_TIMEOUT_S + max(FREE_SPACE_DELAY_S) + 2 * FREE_SPACE_STEP_S)
         except OSError as error:
             self.ui.udpStatus.setText(f"打开 UDP 失败：{error}")
@@ -193,6 +198,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def log_write_failed(self, first_sample, message):
         self.ui.frameLog.appendPlainText(message)
         self.publisher.log_failed(first_sample)
+
+    def log_udp_session(self, side, master_id, slave_id):
+        current = master_id if side == "主端" else slave_id
+        previous = self.last_session_ids.get(side)
+        if previous is None:
+            event = "会话开始" if side == "主端" else "首次收到会话"
+        elif previous == current:
+            event = "重新接入原会话"
+        else:
+            event = f"会话重启（原 ID {previous}）"
+        self.last_session_ids[side] = current
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.ui.frameLog.appendPlainText(
+            f"[{stamp}] UDP {side}{event}  主端 ID {master_id or '未发布'}  从端 ID {slave_id or '尚未收到'}"
+        )
 
     def toggle_follow(self):
         if self.worker.state.remote_action:
@@ -307,7 +327,6 @@ class MainWindow(QtWidgets.QMainWindow):
         except ValueError as error:
             self.ui.controlStatus.setText(f"参数错误：{error}")
             return
-        self.ui.frameLog.clear()
         self.worker.start()
         self.timer.start()
         self.refresh()

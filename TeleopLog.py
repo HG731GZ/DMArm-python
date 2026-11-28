@@ -10,7 +10,8 @@ from typing import NamedTuple
 
 from CanWorker import JOINTS, Snapshot
 from Robot_UR import Robot_UR
-from UdpClass import HEADER, MASTER, SlaveFrame
+from UdpClass import SlaveFrame
+from UdpProtocol import FeedbackTiming, HEADER, MASTER
 
 
 def joint_columns(side, quantity):
@@ -41,20 +42,21 @@ MASTER_COLUMNS = (
     *(f"master_{name}_motor_{field}" for name in MOTOR_NAMES for field in MOTOR_FIELDS), "master_gripper_force_n",
     *(f"master_j{n}_{field}" for n in JOINTS for field in ("mit_command_nm", "pv_command_rad")),
 )
-CSV_COLUMNS = ("time_unix_s", "elapsed_s", *MASTER_COLUMNS, *SLAVE_COLUMNS)
+TIMING_COLUMNS = (*FeedbackTiming._fields, "t4_us")
+CSV_COLUMNS = ("time_unix_s", "elapsed_s", *MASTER_COLUMNS, *SLAVE_COLUMNS, *TIMING_COLUMNS)
 
 
 class TeleopSample(NamedTuple):
     sampled_at: float
     wall_time: float
     state: Snapshot | None
-    packet: bytes | None
+    payload: bytes | None
     slave: SlaveFrame | None
 
     def master_motion(self, motors):
-        if self.packet is not None:
+        if self.payload is not None:
             # 本拍发过命令时，保留实际发布的 DH 关节角、速度和限幅后的夹钳命令。
-            return MASTER.unpack_from(self.packet, len(HEADER))
+            return MASTER.unpack(self.payload)
         # 手动采样可只有部分电机回包，各轴独立换算，四个 UDP 命令字段留空。
         q, dq = [None] * len(JOINTS), [None] * len(JOINTS)
         for i, ((_, fb), ratio) in enumerate(zip(motors, Robot_UR.ratio)):
@@ -106,6 +108,10 @@ class TeleopSample(NamedTuple):
         else:
             row.extend((frame.wall_time, frame.generation, frame.mode, *frame.grip, *frame.q, *frame.dq,
                         *frame.torque, frame.teleop_state, *frame.ddq))
+        if frame is None or frame.timing is None:
+            row.extend((None,) * len(TIMING_COLUMNS))
+        else:
+            row.extend((*frame.timing, frame.t4_us))
         return ["NULL" if value is None else value for value in row]
 
 
@@ -121,7 +127,8 @@ class TeleopLog(Thread):
         self.first_sample = None
 
     def record(self, state, packet, slave):
-        sample = TeleopSample(perf_counter(), time(), state, packet, slave)
+        payload = packet[len(HEADER):len(HEADER) + MASTER.size] if packet is not None else None
+        sample = TeleopSample(perf_counter(), time(), state, payload, slave)
         if self.first_sample is None:
             self.first_sample = sample
         self.samples.put(sample)

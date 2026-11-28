@@ -6,7 +6,8 @@ from threading import Condition, Thread
 from time import perf_counter
 
 from Robot_UR import Robot_UR
-from UdpClass import encode_master
+from UdpClass import next_deadline
+from UdpProtocol import master_payload
 
 
 class TeleopPublisher(Thread):
@@ -59,7 +60,9 @@ class TeleopPublisher(Thread):
                 return
             self.publishing = enabled
             self.armed = True
-            if not enabled:
+            if enabled:
+                self.link.start_publishing()
+            else:
                 self.link.stop_publishing()
                 if self.log_mode == "auto":
                     self.set_mode(None)
@@ -88,10 +91,9 @@ class TeleopPublisher(Thread):
         if publishing:
             if not link.error and self.master_ready(state):
                 q, dq = Robot_UR.joint_state(tuple(fb for _, fb in state.motors[:6]))
-                data = encode_master(q, dq, state.motors[6][1].position)
+                payload = master_payload(q, dq, state.motors[6][1].position)
                 try:
-                    if link.send(data, session):
-                        packet = data
+                    packet = link.send(payload, session, q)
                 except OSError as error:
                     with self.cv:
                         if self.link is link and self.publishing and session == link.history[0]:
@@ -152,7 +154,7 @@ class TeleopPublisher(Thread):
                         continue
                     self.tick()
                     # 按原定时轴进入下一个未来节拍，迟到时跳过错过的时隙。
-                    deadline += (int((perf_counter() - deadline) / self.period) + 1) * self.period
+                    deadline = next_deadline(deadline, self.period)
             finally:
                 with self.cv:
                     self.timer = None

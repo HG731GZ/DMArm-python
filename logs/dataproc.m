@@ -12,9 +12,14 @@ logOpts = detectImportOptions(logPath, 'Delimiter', ',', 'Encoding', 'UTF-8', ..
 logOpts.DataLines = [2 Inf];
 logNames = logOpts.VariableNames;
 
-% 全部字段按数值导入，缺失采样保留为 NaN。
+% 业务数值的缺失采样保留为 NaN；v2 整数列直接按 uint64 读取，缺失填零。
 logOpts = setvartype(logOpts, logNames, 'double');
 logOpts = setvaropts(logOpts, logNames, 'TreatAsMissing', {'NULL', 'nan', 'NaN'});
+udpNames = logNames(endsWith(logNames, {'_session', '_seq', '_us'}));
+if ~isempty(udpNames)
+    logOpts = setvartype(logOpts, udpNames, 'uint64');
+    logOpts = setvaropts(logOpts, udpNames, 'TreatAsMissing', 'NULL', 'FillValue', uint64(0));
+end
 logOpts.MissingRule = 'fill';
 logTable = readtable(logPath, logOpts);
 
@@ -38,7 +43,7 @@ for logIndex = 1:numel(logNames)
     end
 end
 
-clear logFile logDir logPath logOpts logNames logTable
+clear logFile logDir logPath logOpts logNames logTable udpNames
 clear logIndex logName logParts logGroup logColumns logAxis
 
 %%
